@@ -14,9 +14,15 @@ import imageio
 import jax
 from jax import jit, vmap
 import jax.numpy as jnp
+from jax.tree_util import register_pytree_node
+
+from nerf_helpers import get_ray_bundle
 
 
 Intrinsics = namedtuple("Intrinsics", ["focal_length", "width", "height"])
+register_pytree_node(
+    Intrinsics, lambda xs: (tuple(xs), None), lambda _, xs: Intrinsics(*xs)
+)
 
 
 def filter_chain(img, options):
@@ -69,15 +75,13 @@ def loader(data_dir, filter_chain_options, device):
     )
 
     images = {
-        split.name: np.array(
-            vmap_filter_chain(
-                jnp.array(
-                    frame_iterator(
-                        lambda frame: imageio.imread(
-                            data_dir / f"{frame['file_path']}.png"
-                        ),
-                        mdata,
-                    )
+        split.name: vmap_filter_chain(
+            jnp.array(
+                frame_iterator(
+                    lambda frame: imageio.imread(
+                        data_dir / f"{frame['file_path']}.png"
+                    ),
+                    mdata,
                 )
             )
         )
@@ -103,12 +107,34 @@ def loader(data_dir, filter_chain_options, device):
     return images, poses, intrinsics
 
 
-@functools.partial(jit, static_argnums=(2,))
-def sampler(imgs, poses, options):
+@functools.partial(jit, static_argnums=(2, 4))
+def sampler(img_target, pose, intrinsics, rng, options):
     """
-    Samples relevant rays within the dataset
+    Given a single image, samples rays
     """
-    pass
+    pose_target = pose[:3, :4]
+
+    ray_origins, ray_directions = get_ray_bundle(
+        intrinsics.height, intrinsics.width, intrinsics.focal_length, pose_target
+    )
+    coords = jnp.stack(
+        jnp.meshgrid(
+            jnp.arange(intrinsics.height), jnp.arange(intrinsics.width), indexing="xy"
+        ),
+        axis=-1,
+    ).reshape((-1, 2))
+
+    select_inds = jax.random.choice(
+        rng, coords.shape[0], shape=(options.num_random_rays,), replace=False
+    )
+    select_inds = coords[select_inds]
+
+    ray_origins = ray_origins[select_inds[:, 0], select_inds[:, 1], :]
+    ray_directions = ray_directions[select_inds[:, 0], select_inds[:, 1], :]
+
+    target_s = img_target[select_inds[:, 0], select_inds[:, 1], :]
+
+    return ray_origins, ray_directions, target_s
 
 
 if __name__ == "__main__":
@@ -122,16 +148,25 @@ if __name__ == "__main__":
     )
     example_options = FilterChainOptions(skiptest=1, downscale=2, white_background=True)
 
-    devices = jax.devices("cpu")
-    # devices = jax.devices("gpu")
+    # devices = jax.devices("cpu")
+    devices = jax.devices("gpu")
 
     images, poses, intrinsics = loader(
         Path(".") / "data" / "nerf_synthetic" / "lego", example_options, devices[0],
     )
 
-    for image in images["test"]:
+    SamplerOptions = namedtuple("SamplerOptions", ["num_random_rays"])
+    sampler_options = SamplerOptions(num_random_rays=1024)
+
+    rng = jax.random.PRNGKey(1010)
+    ray_origins, ray_directions, target_s = sampler(
+        images["train"][0], poses["train"][0], intrinsics["train"], rng, sampler_options
+    )
+    print(ray_directions)
+
+    for image in images["train"]:
         cv2.imshow("img", image[:, :, [2, 1, 0]])
         cv2.waitKey(1)
 
-    print(poses)
-    print(intrinsics)
+    # print(poses)
+    # print(intrinsics)

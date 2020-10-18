@@ -50,7 +50,7 @@ def cumprod_exclusive(tensor):
     return index_update(prod, index[..., 0], 1.0)
 
 
-@functools.partial(jit, static_argnums=(2, 3, 4))
+@functools.partial(jit, static_argnums=(2, 4))
 def sample_pdf(bins, weights, num_samples, rng, det):
     """
     >>> rng = jax.random.PRNGKey(1010)

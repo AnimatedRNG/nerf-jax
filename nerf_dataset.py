@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import json
 from io import StringIO
+import functools
+from collections import namedtuple
 
 import numpy as np
 import yaml
@@ -12,6 +14,9 @@ import imageio
 import jax
 from jax import jit, vmap
 import jax.numpy as jnp
+
+
+Intrinsics = namedtuple("Intrinsics", ["focal_length", "width", "height"])
 
 
 def filter_chain(img, options):
@@ -84,12 +89,24 @@ def loader(data_dir, filter_chain_options, device):
         for split, mdata in metadata.items()
     }
 
-    return images, poses
+    intrinsics = {
+        split.name: Intrinsics(
+            focal_length=0.5
+            * images[split.name].shape[2]
+            / np.tan(0.5 * float(mdata["camera_angle_x"])),
+            width=images[split.name].shape[2],
+            height=images[split.name].shape[1],
+        )
+        for split, mdata in metadata.items()
+    }
+
+    return images, poses, intrinsics
 
 
-@jit
-def sampler():
+@functools.partial(jit, static_argnums=(2,))
+def sampler(imgs, poses, options):
     """
+    Samples relevant rays within the dataset
     """
     pass
 
@@ -108,10 +125,8 @@ if __name__ == "__main__":
     devices = jax.devices("cpu")
     # devices = jax.devices("gpu")
 
-    images, poses = loader(
-        Path(".") / "data" / "nerf_synthetic" / "lego",
-        example_options,
-        devices[0],
+    images, poses, intrinsics = loader(
+        Path(".") / "data" / "nerf_synthetic" / "lego", example_options, devices[0],
     )
 
     for image in images["test"]:
@@ -119,3 +134,4 @@ if __name__ == "__main__":
         cv2.waitKey(1)
 
     print(poses)
+    print(intrinsics)

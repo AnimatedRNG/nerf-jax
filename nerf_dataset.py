@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import json
 from io import StringIO
-import functools
 
 import numpy as np
 import yaml
@@ -14,10 +13,7 @@ import jax
 from jax import jit, vmap
 import jax.numpy as jnp
 
-cpu_devices = jax.devices("cpu")
 
-
-@functools.partial(jit, static_argnums=(1,), device=cpu_devices[0])
 def filter_chain(img, options):
     # first, normalize from [0.0, 1.0]
     img = img.astype(jnp.float32) / 255.0
@@ -35,7 +31,7 @@ def filter_chain(img, options):
     return img
 
 
-def loader(data_dir, filter_chain_options):
+def loader(data_dir, filter_chain_options, device):
     """
     Loads images from disk into a big numpy array, which will
     later be pmapped onto all devices.
@@ -49,7 +45,11 @@ def loader(data_dir, filter_chain_options):
         for split in splits
     }
 
-    vmap_filter_chain = vmap(lambda imgs: filter_chain(imgs, filter_chain_options))
+    vmap_filter_chain = vmap(
+        lambda imgs: jit(filter_chain, static_argnums=(1,), device=device)(
+            imgs, filter_chain_options
+        ),
+    )
 
     frame_iterator = lambda f, mdata: np.stack(
         [
@@ -100,9 +100,13 @@ if __name__ == "__main__":
     FilterChainOptions = namedtuple("FilterChainOptions", ["skiptest", "downscale"])
     example_options = FilterChainOptions(skiptest=1, downscale=2)
 
+    devices = jax.devices("cpu")
+    # devices = jax.devices("gpu")
+
     images, poses = loader(
         Path(".") / "data" / "nerf_synthetic" / "lego",
         FilterChainOptions(skiptest=1, downscale=2),
+        devices[0],
     )
 
     for image in images["test"]:

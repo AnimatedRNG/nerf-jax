@@ -28,6 +28,9 @@ def filter_chain(img, options):
             antialias=True,
         )
 
+    if options.white_background:
+        img = img[..., :3] * img[..., -1:] + (1.0 - img[..., -1:])
+
     return img
 
 
@@ -97,15 +100,17 @@ if __name__ == "__main__":
     import cv2
 
     # example setup with the lego data
-    FilterChainOptions = namedtuple("FilterChainOptions", ["skiptest", "downscale"])
-    example_options = FilterChainOptions(skiptest=1, downscale=2)
+    FilterChainOptions = namedtuple(
+        "FilterChainOptions", ["skiptest", "downscale", "white_background"]
+    )
+    example_options = FilterChainOptions(skiptest=1, downscale=2, white_background=True)
 
     devices = jax.devices("cpu")
     # devices = jax.devices("gpu")
 
     images, poses = loader(
         Path(".") / "data" / "nerf_synthetic" / "lego",
-        FilterChainOptions(skiptest=1, downscale=2),
+        example_options,
         devices[0],
     )
 

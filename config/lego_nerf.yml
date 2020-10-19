@@ -1,0 +1,115 @@
+experiment:
+
+  seed: 42
+
+  train_iters: 200000
+
+  validate_every: 100
+
+  save_every: 5000
+
+  print_every: 100
+
+dataset:
+
+  basedir: data/nerf_synthetic/lego
+
+  filter_chain:
+    
+    skiptest: 1
+    
+    downscale: 2
+    
+    white_background: False
+    
+  sampler:
+    
+    num_random_rays: 1024
+
+  projection:
+    
+    no_ndc: True
+    
+    near: 2
+    
+    far: 6
+
+model:
+
+  coarse:
+
+    num_layers: 8
+    
+    hidden_size: 128
+    
+    skip_connect_every: 3
+    
+    num_encoding_fn_xyz: 10
+    
+    use_viewdirs: True
+    
+    num_encoding_fn_dir: 4
+    
+  fine:
+
+    num_layers: 8
+    
+    hidden_size: 128
+    
+    skip_connect_every: 3
+    
+    num_encoding_fn_xyz: 10
+    
+    use_viewdirs: True
+    
+    num_encoding_fn_dir: 4
+
+  optimizer:
+    
+    lr: 5.0E-3
+
+  scheduler:
+
+    lr_decay: 250
+    
+    lr_decay_factor: 0.1
+
+nerf:
+
+  train:
+    
+    use_viewdirs: True
+
+    num_random_rays: 1024
+
+    chunksize: 16192
+
+    perturb: True
+
+    num_coarse: 64
+
+    num_fine: 64
+
+    white_background: False
+
+    radiance_field_noise_std: 0.2
+
+    lindisp: False
+
+  validation:
+    
+    use_viewdirs: True
+
+    chunksize: 16192
+
+    perturb: False
+
+    num_coarse: 64
+
+    num_fine: 64
+
+    white_background: False
+
+    radiance_field_noise_std: 0.
+
+    lindisp: False

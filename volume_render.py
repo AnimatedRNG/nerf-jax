@@ -67,7 +67,7 @@ def volume_render_radiance_field(
     rgb = jax.nn.sigmoid(radiance_field[..., :3])
     if radiance_field_noise_std > 0.0:
         noise = (
-            jax.random.normal(radiance_field[..., 3].shape, jnp.float32,)
+            jax.random.normal(rng, radiance_field[..., 3].shape, jnp.float32,)
             * radiance_field_noise_std
         )
     else:

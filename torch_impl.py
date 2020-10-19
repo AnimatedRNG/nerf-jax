@@ -73,6 +73,16 @@ def positional_encoding_torch(
         return torch.cat(encoding, dim=-1)
 
 
+def get_embedding_function_torch(
+    num_encoding_functions=6, include_input=True, log_sampling=True
+):
+    r"""Returns a lambda function that internally calls positional_encoding.
+    """
+    return lambda x: positional_encoding_torch(
+        x, num_encoding_functions, include_input, log_sampling
+    )
+
+
 def cumprod_exclusive_torch(tensor: torch.Tensor) -> torch.Tensor:
     r"""Mimick functionality of tf.math.cumprod(..., exclusive=True), as it isn't available in PyTorch.
     Args:

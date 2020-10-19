@@ -8,8 +8,6 @@ import functools
 from collections import namedtuple
 
 import numpy as np
-import yaml
-import box
 import imageio
 import jax
 from jax import jit, vmap
@@ -89,7 +87,9 @@ def loader(data_dir, filter_chain_options, device):
     }
 
     poses = {
-        split.name: frame_iterator(lambda frame: frame["transform_matrix"], mdata)
+        split.name: frame_iterator(
+            lambda frame: frame["transform_matrix"], mdata
+        )
         for split, mdata in metadata.items()
     }
 
@@ -117,6 +117,7 @@ def sampler(img_target, pose, intrinsics, rng, options):
     ray_origins, ray_directions = get_ray_bundle(
         intrinsics.height, intrinsics.width, intrinsics.focal_length, pose_target
     )
+
     coords = jnp.stack(
         jnp.meshgrid(
             jnp.arange(intrinsics.height), jnp.arange(intrinsics.width), indexing="xy"
@@ -162,11 +163,7 @@ if __name__ == "__main__":
     ray_origins, ray_directions, target_s = sampler(
         images["train"][0], poses["train"][0], intrinsics["train"], rng, sampler_options
     )
-    print(ray_directions)
 
     for image in images["train"]:
         cv2.imshow("img", image[:, :, [2, 1, 0]])
         cv2.waitKey(1)
-
-    # print(poses)
-    # print(intrinsics)

@@ -5,8 +5,6 @@ import torch
 import jax
 import jax.numpy as jnp
 
-from models import FlexibleNeRFModel
-
 
 def torch_to_jax(torch_params, model_name):
     """
@@ -61,6 +59,7 @@ if __name__ == "__main__":
     import doctest
     import torch
     import haiku as hk
+    #from models import FlexibleNeRFModel
     from torch_impl import *
 
     print(doctest.testmod(exclude_empty=True))

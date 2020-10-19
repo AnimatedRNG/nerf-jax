@@ -14,7 +14,7 @@ from jax import jit, vmap
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node
 
-from nerf_helpers import get_ray_bundle
+from .nerf_helpers import get_ray_bundle
 
 
 Intrinsics = namedtuple("Intrinsics", ["focal_length", "width", "height"])
@@ -87,9 +87,7 @@ def loader(data_dir, filter_chain_options, device):
     }
 
     poses = {
-        split.name: frame_iterator(
-            lambda frame: frame["transform_matrix"], mdata
-        )
+        split.name: frame_iterator(lambda frame: frame["transform_matrix"], mdata)
         for split, mdata in metadata.items()
     }
 
@@ -142,6 +140,8 @@ if __name__ == "__main__":
     from collections import namedtuple
 
     import cv2
+
+    # TODO: Write real tests for this component
 
     # example setup with the lego data
     FilterChainOptions = namedtuple(

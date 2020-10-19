@@ -1,13 +1,11 @@
-#!/usr/bin/env python3
-
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 import functools
 
-from nerf_helpers import positional_encoding, map_batched, map_batched_rng, sample_pdf
-from volume_render import volume_render_radiance_field
+from .nerf_helpers import positional_encoding, map_batched, map_batched_rng, sample_pdf
+from .volume_render import volume_render_radiance_field
 
 
 @functools.partial(jit, static_argnums=(0, 3, 4, 5))
@@ -19,38 +17,6 @@ def run_network(
     xyz_encoding_functions,
     view_encoding_functions,
 ):
-    """
-    >>> import haiku as hk
-    >>> from models import FlexibleNeRFModel
-    >>> from torch_to_jax import torch_to_jax
-
-    >>> x = np.random.randn(250, 66).astype(np.float32)
-
-    >>> net_torch = FlexibleNeRFModelTorch()
-    >>> net_jax = hk.without_apply_rng(hk.transform(jax.jit(lambda x: FlexibleNeRFModel()(x))))
-
-    >>> jax_params = torch_to_jax(dict(net_torch.named_parameters()), 'flexible_ne_rf_model')
-
-    >>> jax_out = net_jax.apply(jax_params, jnp.array(x))
-    >>> torch_out = net_torch(torch.from_numpy(x))
-
-    >>> pts_np = np.random.random((256, 128, 3)).astype(np.float32)
-    >>> ray_batch_np = np.random.random((256, 11)).astype(np.float32)
-
-    >>> pts_torch = torch.from_numpy(pts_np)
-    >>> ray_batch_torch = torch.from_numpy(ray_batch_np)
-
-    >>> pts_jax = jnp.array(pts_np)
-    >>> ray_batch_jax = jnp.array(ray_batch_np)
-
-    >>> torch_result = run_network_torch(net_torch, pts_torch, ray_batch_torch, 32,
-    ...                                 lambda p: positional_encoding_torch(p, 6),
-    ...                                 lambda p: positional_encoding_torch(p, 4))
-    >>> jax_result = run_network(functools.partial(net_jax.apply, jax_params), pts_jax, ray_batch_jax, 32, 6, 4)
-
-    >>> np.allclose(np.array(jax_result), torch_result.detach().numpy(), atol=1e-7)
-    True
-    """
     pts_flat = pts.reshape((-1, pts.shape[-1]))
 
     embedded = vmap(lambda x: positional_encoding(x, xyz_encoding_functions))(pts_flat)
@@ -240,11 +206,3 @@ def run_one_iter_of_nerf(
         return rng, images.reshape(ray_directions.shape[:-1] + (10,))
     else:
         return rng, images
-
-
-if __name__ == "__main__":
-    import doctest
-    import torch
-    from torch_impl import *
-
-    print(doctest.testmod(exclude_empty=True))

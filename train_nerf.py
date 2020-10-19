@@ -14,11 +14,11 @@ import haiku as hk
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
-from nerf_helpers import get_ray_bundle
-from nerf_dataset import loader, sampler
-from train_utils import run_one_iter_of_nerf, run_network
-from models import FlexibleNeRFModel
-from torch_to_jax import torch_to_jax
+from nerf import get_ray_bundle
+from nerf import loader, sampler
+from nerf import run_one_iter_of_nerf, run_network
+from nerf import FlexibleNeRFModel
+from reference import torch_to_jax
 
 
 def train_nerf(config):
@@ -53,6 +53,7 @@ def train_nerf(config):
     # Load checkpoint (delete this later)
     checkpoint = torch.load(
         "./checkpoint/checkpoint199999.ckpt"
+        # "./checkpoint/checkpoint95000.ckpt"
     )
     model_coarse_params = torch_to_jax(
         checkpoint["model_coarse_state_dict"], "flexible_ne_rf_model"
@@ -75,18 +76,49 @@ def train_nerf(config):
     writer = SummaryWriter(logdir.absolute())
     (logdir / "config.yml").open("w").write(config.to_yaml())
 
-    mode = "val"
+    mode = "train"
     H, W, focal = (
         intrinsics[mode].height,
         intrinsics[mode].width,
         intrinsics[mode].focal_length,
     )
 
-    ray_origins, ray_directions = get_ray_bundle(
+    """ray_origins, ray_directions = get_ray_bundle(
         H, W, focal, poses[mode][0][:3, :4].astype(np.float32),
+    )"""
+
+    ray_origins, ray_directions, target_s = sampler(
+        images["train"][0],
+        poses["train"][0],
+        intrinsics["train"],
+        rng,
+        config.dataset.sampler,
     )
 
-    rng, images = run_one_iter_of_nerf(
+    fwd = jax.jit(
+        lambda cp, fp: jnp.mean(
+            (
+                target_s[..., :3]
+                - run_one_iter_of_nerf(
+                    H,
+                    W,
+                    focal,
+                    functools.partial(model_coarse.apply, cp),
+                    functools.partial(model_fine.apply, fp),
+                    ray_origins,
+                    ray_directions,
+                    config.nerf.train,
+                    config.model,
+                    config.dataset.projection,
+                    rng,
+                    True,
+                )[1].reshape(target_s.shape[0], 10)[..., 5:8]
+                ** 2.0
+            )
+        )
+    )
+
+    """rng, rendered_images = run_one_iter_of_nerf(
         H,
         W,
         focal,
@@ -100,19 +132,24 @@ def train_nerf(config):
         rng,
         True,
     )
-    images.block_until_ready()
 
     rgb_coarse, _, _, rgb_fine, _, _ = (
-        images[..., :3],
-        images[..., 3:4],
-        images[..., 4:5],
-        images[..., 5:8],
-        images[..., 8:9],
-        images[..., 9:10],
-    )
+        rendered_images[..., :3],
+        rendered_images[..., 3:4],
+        rendered_images[..., 4:5],
+        rendered_images[..., 5:8],
+        rendered_images[..., 8:9],
+        rendered_images[..., 9:10],
+    )"""
 
-    cv2.imshow("img", np.array(rgb_fine))
-    cv2.waitKey(0)
+    # loss = fwd(model_coarse_params, model_fine_params)
+
+    cp_grad, fp_grad = grad(fwd, argnums=(0, 1))(model_coarse_params, model_fine_params)
+    print(fp_grad)
+
+    # cv2.imshow("reference", np.array(images["val"][0]))
+    # cv2.imshow("render", np.array(rgb_fine))
+    # cv2.waitKey(0)
 
     # Optimization loop
     # for i in trange(0, config.experiment.train_iters):
@@ -134,7 +171,7 @@ def main():
 if __name__ == "__main__":
     import cv2
     import torch
-    from torch_impl import *
+    from reference import *
     import time
 
     main()

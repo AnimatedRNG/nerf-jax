@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -8,27 +6,6 @@ import functools
 
 
 class FlexibleNeRFModel(hk.Module):
-    """
-    >>> x = np.ones((250, 66), dtype=np.float32)
-
-    >>> l = np.random.random(1)[0]
-
-    >>> key = hk.PRNGSequence(42)
-    >>> net = hk.transform(lambda x: FlexibleNeRFModel()(x))
-    >>> params = net.init(next(key), jnp.array(x))
-
-    >>> params = jax.tree_util.tree_map(lambda v: jnp.ones_like(v) * l, params)
-
-    >>> net_torch = FlexibleNeRFModelTorch()
-    >>> with torch.no_grad():
-    ...     _ = [v.fill_(l) for v in net_torch.parameters()]
-
-    >>> torch_out = net_torch(torch.from_numpy(x))
-    >>> jnp_out = net.apply(params, next(key), jnp.array(x))
-    >>> np.allclose(torch_out.detach().numpy(), np.array(jnp_out))
-    True
-    """
-
     def __init__(
         self,
         num_layers=4,
@@ -82,11 +59,3 @@ class FlexibleNeRFModel(hk.Module):
             return jnp.concatenate((rgb, alpha), axis=-1)
         else:
             return hk.Linear(4, name="fc_out")(x)
-
-
-if __name__ == "__main__":
-    import doctest
-    import torch
-    from torch_impl import *
-
-    print(doctest.testmod(exclude_empty=True))

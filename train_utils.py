@@ -6,7 +6,8 @@ import jax.numpy as jnp
 from jax import jit, vmap
 import functools
 
-from nerf_helpers import positional_encoding, map_batched
+from nerf_helpers import positional_encoding, map_batched, map_batched_rng, sample_pdf
+from volume_render import volume_render_radiance_field
 
 
 @functools.partial(jit, static_argnums=(0, 3, 4, 5))
@@ -55,7 +56,7 @@ def run_network(
     embedded = vmap(lambda x: positional_encoding(x, xyz_encoding_functions))(pts_flat)
 
     viewdirs = ray_batch[..., None, -3:]
-    input_dirs = np.repeat(viewdirs, 128, axis=-2)
+    input_dirs = jnp.broadcast_to(viewdirs, pts.shape)
     input_dirs_flat = input_dirs.reshape((-1, input_dirs.shape[-1]))
 
     embedded_dirs = vmap(lambda x: positional_encoding(x, view_encoding_functions))(
@@ -72,9 +73,9 @@ def run_network(
     return radiance_field
 
 
-@functools.partial(jax.jit, static_argnums=(3, 4))
+@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
 def predict_and_render_radiance(
-    ray_batch, model_coarse, model_fine, options, rng  # immutable struct?
+    ray_batch, model_coarse, model_fine, options, model_options, rng
 ):
     num_rays = ray_batch.shape[0]
     ro, rd = ray_batch[..., :3], ray_batch[..., 3:6]
@@ -93,7 +94,8 @@ def predict_and_render_radiance(
         upper = jnp.concatenate((mids, z_vals[..., -1:]), axis=-1)
         lower = jnp.concatenate((z_vals[..., :1], mids), axis=-1)
 
-        t_rand = jax.random.uniform(rng, z_vals.shape)
+        rng, subrng = jax.random.split(rng)
+        t_rand = jax.random.uniform(subrng, z_vals.shape)
         z_vals = lower + (upper - lower) * t_rand
 
     # pts -> (num_rays, N_samples, 3)
@@ -104,10 +106,11 @@ def predict_and_render_radiance(
         pts,
         ray_batch,
         options.chunksize,
-        options.coarse.num_encoding_fn_xyz,
-        options.coarse.num_encoding_fn_dir,
+        model_options.coarse.num_encoding_fn_xyz,
+        model_options.coarse.num_encoding_fn_dir,
     )
 
+    rng, subrng = jax.random.split(rng)
     (
         rgb_coarse,
         disp_coarse,
@@ -118,22 +121,25 @@ def predict_and_render_radiance(
         radiance_field,
         z_vals,
         rd,
-        radiance_field_noise_std=options.radiance_field_noise_std,
-        white_background=options.white_background,
+        subrng,
+        options.radiance_field_noise_std,
+        options.white_background,
     )
 
     if options.num_fine > 0:
+        rng, subrng = jax.random.split(rng)
         z_vals_mid = 0.5 * (z_vals[..., 1:] + z_vals[..., :-1])
         z_samples = sample_pdf(
             z_vals_mid,
             weights[..., 1:-1],
             options.num_fine,
-            det=(options.perturb == 0.0),
+            subrng,
+            (options.perturb == 0.0),
         )
         jax.lax.stop_gradient(z_samples)
 
         z_vals = jax.lax.sort(
-            jax.concatenate((z_vals, z_samples), axis=-1), dimension=-1
+            jnp.concatenate((z_vals, z_samples), axis=-1), dimension=-1
         )
         # pts -> (N_rays, N_samples + N_importance, 3)
         pts = ro[..., None, :] + rd[..., None, :] * z_vals[..., :, None]
@@ -143,23 +149,39 @@ def predict_and_render_radiance(
             pts,
             ray_batch,
             options.chunksize,
-            options.fine.num_encoding_fn_xyz,
-            options.fine.num_encoding_fn_dir,
+            model_options.fine.num_encoding_fn_xyz,
+            model_options.fine.num_encoding_fn_dir,
         )
+        rng, subrng = jax.random.split(rng)
         rgb_fine, disp_fine, acc_fine, _, _ = volume_render_radiance_field(
             radiance_field,
             z_vals,
             rd,
-            radiance_field_noise_std=options.radiance_field_noise_std,
-            white_background=options.white_background,
+            subrng,
+            options.radiance_field_noise_std,
+            options.white_background,
         )
 
-        return rgb_coarse, disp_coarse, acc_coarse, rgb_fine, disp_fine, acc_fine
+        return (
+            rgb_coarse,
+            disp_coarse[..., jnp.newaxis],
+            acc_coarse[..., jnp.newaxis],
+            rgb_fine,
+            disp_fine[..., jnp.newaxis],
+            acc_fine[..., jnp.newaxis],
+        )
     else:
-        return rgb_coarse, disp_coarse, acc_coarse, None, None, None
+        return (
+            rgb_coarse,
+            disp_coarse[..., jnp.newaxis],
+            acc_coarse[..., jnp.newaxis],
+            None,
+            None,
+            None,
+        )
 
 
-@functools.partial(jax.jit, static_argnums=(7, 8, 9))
+@functools.partial(jax.jit, static_argnums=(3, 4, 7, 8, 9, 11))
 def run_one_iter_of_nerf(
     height,
     width,
@@ -169,16 +191,20 @@ def run_one_iter_of_nerf(
     ray_origins,
     ray_directions,
     options,
-    options_dataset,
-    validation
+    model_options,
+    dataset_options,
+    rng,
+    validation,
 ):
     if options.use_viewdirs:
         # Provide ray directions as input
         viewdirs = ray_directions
-        viewdirs = viewdirs / jnp.linalg.norm(viewdirs, ord=2, axis=-1)[..., jnp.newaxis]
+        viewdirs = (
+            viewdirs / jnp.linalg.norm(viewdirs, ord=2, axis=-1)[..., jnp.newaxis]
+        )
         viewdirs = viewdirs.reshape((-1, 3))
 
-    if options_dataset.no_ndc is False:
+    if dataset_options.no_ndc is False:
         ro, rd = ndc_rays(height, width, focal_length, 1.0, ray_origins, ray_directions)
         ro = ro.reshape((-1, 3))
         rd = rd.reshape((-1, 3))
@@ -186,37 +212,34 @@ def run_one_iter_of_nerf(
         ro = ray_origins.reshape((-1, 3))
         rd = ray_directions.reshape((-1, 3))
 
-    near = options_dataset.near * jnp.ones_like(rd[..., :1])
-    far = options_dataset.far * jnp.ones_like(rd[..., :1])
+    near = dataset_options.near * jnp.ones_like(rd[..., :1])
+    far = dataset_options.far * jnp.ones_like(rd[..., :1])
     rays = jnp.concatenate((ro, rd, near, far), axis=-1)
     if options.use_viewdirs:
         rays = jnp.concatenate((rays, viewdirs), axis=-1)
 
-    render_rays = lambda batch: \
-        jnp.stack(
-            (pred
-             for pred in predict_and_render_radiance(
-                 batch,
-                 model_coarse,
-                 model_fine,
-                 options,
-                 )
-             if pred is not None
-            ),
-            axis=-1
-        )
+    render_rays = lambda batch_rng: jnp.concatenate(
+        tuple(
+            pred
+            for pred in predict_and_render_radiance(
+                batch_rng[0],
+                model_coarse,
+                model_fine,
+                options,
+                model_options,
+                batch_rng[1],
+            )
+            if pred is not None
+        ),
+        axis=-1,
+    )
 
-    images = map_batched(rays, render_rays, options.chunksize, False)
+    images, rng = map_batched_rng(rays, render_rays, options.chunksize, False, rng)
 
     if validation:
-        restore_shapes = (
-            ray_directions.shape + [images.shape[-1]],
-            ray_directions.shape[:-1] + [images.shape[-1]],
-            ray_directions.shape[:-1] + [images.shape[-1]]
-        )
-        if model_fine:
-            restore_shapes += restore_shapes
-        return images.reshape(restore_shapes)
+        return rng, images.reshape(ray_directions.shape[:-1] + (10,))
+    else:
+        return rng, images
 
 
 if __name__ == "__main__":

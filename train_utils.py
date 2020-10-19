@@ -134,7 +134,7 @@ def predict_and_render_radiance(
             weights[..., 1:-1],
             options.num_fine,
             subrng,
-            (options.perturb == 0.0),
+            not options.perturb,
         )
         jax.lax.stop_gradient(z_samples)
 

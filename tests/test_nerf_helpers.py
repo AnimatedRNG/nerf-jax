@@ -4,7 +4,6 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import jit
-
 import torch
 
 from reference import (
@@ -20,20 +19,30 @@ from nerf import (
     get_ray_bundle,
     map_batched,
 )
+from test_helpers import run_and_grad
 
 
 def test_positional_encoding():
-    a = positional_encoding_torch(torch.linspace(0.0, 1.0, 3), 6).numpy()
-    b = np.array(positional_encoding(jnp.linspace(0.0, 1.0, 3), 6))
+    inp = np.linspace(0.0, 1.0, 3)
 
-    assert np.allclose(a, b)
+    jf = lambda x: positional_encoding(x, 6)
+    tf = lambda x: positional_encoding_torch(x, 6)
+
+    jo, to, djos, dtos = run_and_grad(jf, tf, (0,), inp)
+
+    assert np.allclose(jo, to)
+    assert all(np.allclose(djo, dto) for djo, dto in zip(djos, dtos))
 
 
 def test_cumprod_exclusive():
-    a = cumprod_exclusive_torch(torch.arange(1, 10)).numpy()
-    b = np.array(cumprod_exclusive(jnp.arange(1, 10)))
+    inp = np.arange(1, 10).astype(np.float32)
 
-    assert np.array_equal(a, b)
+    jo, to, djos, dtos = run_and_grad(
+        cumprod_exclusive, cumprod_exclusive_torch, (0,), inp
+    )
+
+    assert np.allclose(jo, to)
+    assert all(np.allclose(djo, dto) for djo, dto in zip(djos, dtos))
 
 
 def test_sample_pdf():
@@ -42,15 +51,15 @@ def test_sample_pdf():
     bins_np = np.random.randn(8).reshape(2, 4).astype(np.float32) * 10
     weights_np = np.random.randn(8).reshape(2, 4).astype(np.float32) * 15
 
-    samples_torch = sample_pdf_torch(
-        torch.from_numpy(bins_np), torch.from_numpy(weights_np), 10, True
-    ).numpy()
+    jax_fn = lambda bins, weights: sample_pdf(bins, weights, 10, rng, True)
+    torch_fn = lambda bins, weights: sample_pdf_torch(bins, weights, 10, True)
 
-    bins = jnp.array(bins_np)
-    weights = jnp.array(weights_np)
-    samples = np.array(sample_pdf(bins, weights, 10, rng, True))
+    jo, to, djos, dtos = run_and_grad(jax_fn, torch_fn, (0, 1), bins_np, weights_np)
 
-    assert np.allclose(samples_torch, samples, 1e-3)
+    assert np.allclose(jo, to, rtol=1e-3, atol=1e-5)
+    assert all(
+        np.allclose(djo, dto, rtol=1e-3, atol=1e-5) for djo, dto in zip(djos, dtos)
+    )
 
 
 def test_get_ray_bundle():
@@ -58,11 +67,17 @@ def test_get_ray_bundle():
     tfrom_cam2world[0, 3] = 2.0
     tfrom_cam2world[1, 3] = -3.0
     tfrom_cam2world[2, 3] = 5.0
-    bundle_torch = get_ray_bundle_torch(10, 10, 0.3, torch.from_numpy(tfrom_cam2world))
-    bundle = get_ray_bundle(10, 10, 0.3, jnp.array(tfrom_cam2world))
 
-    assert np.allclose(bundle_torch[0].numpy(), np.array(bundle[0]))
-    assert np.allclose(bundle_torch[1].numpy(), np.array(bundle[1]))
+    for i in range(0, 2):
+        jax_fn = lambda x: get_ray_bundle(10, 10, 0.3, x)[i]
+        torch_fn = lambda x: get_ray_bundle_torch(10, 10, 0.3, x)[i]
+
+        jo, to, djos, dtos = run_and_grad(jax_fn, torch_fn, (0,), tfrom_cam2world)
+
+        assert np.allclose(jo, to, rtol=1e-3, atol=1e-5)
+        assert all(
+            np.allclose(djo, dto, rtol=1e-3, atol=1e-5) for djo, dto in zip(djos, dtos)
+        )
 
 
 def test_map_batched():
@@ -75,7 +90,5 @@ def test_map_batched():
         for vmap_val in [False, True]:
             arr = jax.random.uniform(rng, (arr_len, 3))
 
-            sqrt_test = map_batched(
-                arr, lambda a: jnp.sqrt(a), chunk_size, vmap_val
-            )
+            sqrt_test = map_batched(arr, lambda a: jnp.sqrt(a), chunk_size, vmap_val)
             assert jnp.allclose(sqrt_test, jnp.sqrt(arr))

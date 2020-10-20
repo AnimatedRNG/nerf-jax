@@ -144,7 +144,7 @@ def train_nerf(config):
 
     # loss = fwd(model_coarse_params, model_fine_params)
 
-    cp_grad, fp_grad = grad(fwd, argnums=(0, 1))(model_coarse_params, model_fine_params)
+    cp_grad, fp_grad = jit(grad(fwd, argnums=(0, 1)))(model_coarse_params, model_fine_params)
     print(fp_grad)
 
     # cv2.imshow("reference", np.array(images["val"][0]))

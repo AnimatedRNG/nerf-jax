@@ -8,10 +8,12 @@ import numpy as np
 import yaml
 from box import Box
 import jax
-from jax import jit, vmap, pmap, grad
+from jax import jit, vmap, pmap, grad, value_and_grad
 import jax.numpy as jnp
+from jax.experimental.optimizers import adam
 import haiku as hk
-from tensorboardX import SummaryWriter
+
+# from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
 from nerf import get_ray_bundle
@@ -69,11 +71,17 @@ def train_nerf(config):
     )
 
     # TODO: figure out optimizer
+    num_decay_steps = config.model.optimizer.lr_decay * 1000
+    init_adam, update, get_params = adam(
+        lambda iteration: config.model.optimizer.initial_lr
+        * (config.model.optimizer.lr_decay_factor ** (iteration / num_decay_steps))
+    )
+    optimizer_state = init_adam((model_coarse_params, model_fine_params))
 
     # Logging
     logdir = Path("logs") / "lego"
     logdir.mkdir(exist_ok=True)
-    writer = SummaryWriter(logdir.absolute())
+    # writer = SummaryWriter(logdir.absolute())
     (logdir / "config.yml").open("w").write(config.to_yaml())
 
     mode = "train"
@@ -83,40 +91,78 @@ def train_nerf(config):
         intrinsics[mode].focal_length,
     )
 
+    #@jit
+    def loss_fn(f_rng, cp, fp, image_id):
+        ray_origins, ray_directions, target_s = sampler(
+            images["train"][0],
+            poses["train"][0],
+            intrinsics["train"],
+            rng,
+            config.dataset.sampler,
+        )
+
+        _, rendered_images = run_one_iter_of_nerf(
+            H,
+            W,
+            focal,
+            functools.partial(model_coarse.apply, cp),
+            functools.partial(model_fine.apply, fp),
+            ray_origins,
+            ray_directions,
+            config.nerf.train,
+            config.model,
+            config.dataset.projection,
+            f_rng,
+            False,
+        )
+
+        rgb_coarse, _, _, rgb_fine, _, _ = (
+            rendered_images[..., :3],
+            rendered_images[..., 3:4],
+            rendered_images[..., 4:5],
+            rendered_images[..., 5:8],
+            rendered_images[..., 8:9],
+            rendered_images[..., 9:10],
+        )
+
+        loss = jnp.mean(((target_s[..., :3] - rgb_coarse) ** 2.0).flatten())
+        if config.nerf.train.num_fine > 0:
+            loss = loss + jnp.mean(((target_s[..., :3] - rgb_fine) ** 2.0).flatten())
+        return loss
+
     """ray_origins, ray_directions = get_ray_bundle(
         H, W, focal, poses[mode][0][:3, :4].astype(np.float32),
     )"""
 
-    ray_origins, ray_directions, target_s = sampler(
-        images["train"][0],
-        poses["train"][0],
-        intrinsics["train"],
-        rng,
-        config.dataset.sampler,
+    rng, subrng_img = jax.random.split(rng, 2)
+    train_image_seq = jax.random.randint(
+        subrng_img,
+        shape=(config.experiment.train_iters,),
+        minval=0,
+        maxval=images["train"].shape[0],
+        dtype=jnp.uint32,
     )
 
-    fwd = jax.jit(
-        lambda cp, fp: jnp.mean(
-            (
-                target_s[..., :3]
-                - run_one_iter_of_nerf(
-                    H,
-                    W,
-                    focal,
-                    functools.partial(model_coarse.apply, cp),
-                    functools.partial(model_fine.apply, fp),
-                    ray_origins,
-                    ray_directions,
-                    config.nerf.train,
-                    config.model,
-                    config.dataset.projection,
-                    rng,
-                    True,
-                )[1].reshape(target_s.shape[0], 10)[..., 5:8]
-                ** 2.0
+    @functools.partial(jit, static_argnums=(2,))
+    def update_loop(rng, optimizer_state, num_iterations):
+        def inner(i, rng_optimizer_state):
+            rng, optimizer_state = rng_optimizer_state
+
+            rng, subrng = jax.random.split(rng, 2)
+
+            (model_coarse_params, model_fine_params) = get_params(optimizer_state)
+
+            loss, (cp_grad, fp_grad) = value_and_grad(loss_fn, argnums=(1, 2))(
+                subrng, model_coarse_params, model_fine_params, train_image_seq[i]
             )
-        )
-    )
+
+            optimizer_state = update(i, (cp_grad, fp_grad), optimizer_state)
+
+            return rng, optimizer_state
+        return jax.lax.fori_loop(0, num_iterations, inner, (rng, optimizer_state))
+
+    for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
+        rng, optimizer_state = update_loop(rng, optimizer_state, config.experiment.jit_loop)
 
     """rng, rendered_images = run_one_iter_of_nerf(
         H,
@@ -141,11 +187,6 @@ def train_nerf(config):
         rendered_images[..., 8:9],
         rendered_images[..., 9:10],
     )"""
-
-    # loss = fwd(model_coarse_params, model_fine_params)
-
-    cp_grad, fp_grad = jit(grad(fwd, argnums=(0, 1)))(model_coarse_params, model_fine_params)
-    print(fp_grad)
 
     # cv2.imshow("reference", np.array(images["val"][0]))
     # cv2.imshow("render", np.array(rgb_fine))

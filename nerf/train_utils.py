@@ -8,7 +8,7 @@ from .nerf_helpers import positional_encoding, map_batched, map_batched_rng, sam
 from .volume_render import volume_render_radiance_field
 
 
-@functools.partial(jit, static_argnums=(0, 3, 4, 5))
+#@functools.partial(jit, static_argnums=(0, 3, 4, 5))
 def run_network(
     network_fn,
     pts,
@@ -39,7 +39,7 @@ def run_network(
     return radiance_field
 
 
-@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
+#@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
 def predict_and_render_radiance(
     ray_batch, model_coarse, model_fine, options, model_options, rng
 ):
@@ -147,7 +147,7 @@ def predict_and_render_radiance(
         )
 
 
-@functools.partial(jax.jit, static_argnums=(3, 4, 7, 8, 9, 11))
+#@functools.partial(jax.jit, static_argnums=(3, 4, 7, 8, 9, 11))
 def run_one_iter_of_nerf(
     height,
     width,

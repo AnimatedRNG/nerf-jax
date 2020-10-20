@@ -8,7 +8,7 @@ import functools
 from .nerf_helpers import cumprod_exclusive
 
 
-@functools.partial(jit, static_argnums=(4, 5))
+#@functools.partial(jit, static_argnums=(4, 5))
 def volume_render_radiance_field(
     radiance_field,
     depth_values,

@@ -7,7 +7,7 @@ from jax import jit, vmap
 from jax.ops import index, index_update
 
 
-@functools.partial(jit, static_argnums=(1,))
+#@functools.partial(jit, static_argnums=(1,))
 def positional_encoding(tensor, num_encoding_functions):
     frequency_bands = (
         2.0
@@ -30,13 +30,13 @@ def positional_encoding(tensor, num_encoding_functions):
         return jnp.concatenate((tensor, encoding.flatten()))
 
 
-@jit
+#@jit
 def cumprod_exclusive(tensor):
     prod = jnp.roll(jnp.cumprod(tensor, axis=-1), 1, axis=-1)
     return index_update(prod, index[..., 0], 1.0)
 
 
-@functools.partial(jit, static_argnums=(2, 4))
+#@functools.partial(jit, static_argnums=(2, 4))
 def sample_pdf(bins, weights, num_samples, rng, det):
     weights = weights + 1e-5
     pdf = weights / jnp.sum(weights, axis=-1, keepdims=True)
@@ -74,7 +74,7 @@ def sample_pdf(bins, weights, num_samples, rng, det):
     return samples
 
 
-@functools.partial(jit, static_argnums=(0, 1, 2))
+#@functools.partial(jit, static_argnums=(0, 1, 2))
 def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
     ii, jj = jnp.meshgrid(
         jnp.arange(width, dtype=jnp.float32,),
@@ -98,7 +98,7 @@ def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
     return ray_origins, ray_directions
 
 
-@functools.partial(jit, static_argnums=(1, 2, 3))
+#@functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched(tensor, f, chunksize, use_vmap):
     tensor_diff = -tensor.shape[0] % chunksize
     initial_len = tensor.shape[0]
@@ -115,7 +115,7 @@ def map_batched(tensor, f, chunksize, use_vmap):
     return out
 
 
-@functools.partial(jit, static_argnums=(1, 2, 3))
+#@functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched_rng(tensor, f, chunksize, use_vmap, rng):
     tensor_diff = -tensor.shape[0] % chunksize
     initial_len = tensor.shape[0]

@@ -3,7 +3,7 @@ import functools
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit, vmap
+from jax import jit, vmap, grad
 import haiku as hk
 import torch
 
@@ -53,3 +53,14 @@ def test_run_network():
     )
 
     assert np.allclose(np.array(jax_result), torch_result.detach().numpy(), atol=1e-7)
+
+    '''jax_fn = (
+        lambda pt, rb, p: run_network(
+            functools.partial(net_jax.apply, p), pt, rb, 32, 6, 4
+        )
+        .flatten()
+        .sum()
+    )
+
+    dx = jit(grad(jax_fn, argnums=(0, 1, 2)))(pts_jax, ray_batch_jax, jax_params)
+    print(dx)'''

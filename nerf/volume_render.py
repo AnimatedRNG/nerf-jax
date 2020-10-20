@@ -2,6 +2,7 @@ import numpy as np
 import jax
 from jax import jit
 import jax.numpy as jnp
+from jax.ops import index_update
 import functools
 
 from .nerf_helpers import cumprod_exclusive
@@ -45,7 +46,8 @@ def volume_render_radiance_field(
     depth_map = depth_map.sum(axis=-1)
 
     acc_map = weights.sum(axis=-1)
-    disp_map = 1.0 / jnp.maximum(depth_map / acc_map, 1e-10)
+    # disp_map =  1.0 / jnp.maximum(depth_map / acc_map, 1e-10)
+    disp_map = 1.0 / jnp.maximum(depth_map / (jnp.maximum(acc_map, 1e-10)), 1e-10)
 
     if white_background:
         rgb_map = rgb_map + (1.0 - acc_map[..., None])

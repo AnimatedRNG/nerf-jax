@@ -48,7 +48,7 @@ def test_volume_render_radiance_field():
             raw_jax, z_vals_jax, rays_o_jax, rng, 0.0, False
         )
 
-        loss_fn = lambda *args: volume_render_radiance_field(*args)[4].flatten().sum()
+        loss_fn = lambda *args: volume_render_radiance_field(*args)[i].flatten().sum()
 
         volume_grad_fn = jit(grad(loss_fn, argnums=(0, 1, 2)), static_argnums=(4, 5),)
         volume_grad = volume_grad_fn(raw_jax, z_vals_jax, rays_o_jax, rng, 0.0, False)
@@ -57,3 +57,6 @@ def test_volume_render_radiance_field():
 
     assert np.allclose(rgb_torch.numpy(), np.array(rgb))
     assert np.allclose(disp_torch.numpy(), np.array(disp))
+    assert np.allclose(acc_torch.numpy(), np.array(acc))
+    assert np.allclose(weights_torch.numpy(), np.array(weights))
+    assert np.allclose(depth_torch.numpy(), np.array(depth))

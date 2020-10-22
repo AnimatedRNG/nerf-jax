@@ -101,7 +101,7 @@ def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
 #@functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched(tensor, f, chunksize, use_vmap):
     if tensor.shape[0] < chunksize:
-        return f(out)
+        return f(tensor)
     else:
         tensor_diff = -tensor.shape[0] % chunksize
         initial_len = tensor.shape[0]

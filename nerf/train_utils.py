@@ -39,6 +39,7 @@ def run_network(
     return radiance_field
 
 
+#@functools.partial(jax.profiler.trace_function, name="predict_and_render_radiance")
 #@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
 def predict_and_render_radiance(
     ray_batch, model_coarse, model_fine, options, model_options, rng
@@ -147,7 +148,6 @@ def predict_and_render_radiance(
         )
 
 
-#@functools.partial(jax.jit, static_argnums=(3, 4, 7, 8, 9, 11))
 def run_one_iter_of_nerf(
     height,
     width,

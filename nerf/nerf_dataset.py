@@ -63,7 +63,7 @@ def loader(data_dir, filter_chain_options, device):
         ),
     )
 
-    frame_iterator = lambda f, mdata: np.stack(
+    frame_iterator = lambda f, mdata: jnp.stack(
         [
             f(frame)
             for idx, frame in enumerate(mdata["frames"])
@@ -87,7 +87,9 @@ def loader(data_dir, filter_chain_options, device):
     }
 
     poses = {
-        split.name: frame_iterator(lambda frame: frame["transform_matrix"], mdata)
+        split.name: frame_iterator(
+            lambda frame: jnp.array(frame["transform_matrix"]), mdata
+        )
         for split, mdata in metadata.items()
     }
 
@@ -95,7 +97,7 @@ def loader(data_dir, filter_chain_options, device):
         split.name: Intrinsics(
             focal_length=0.5
             * images[split.name].shape[2]
-            / np.tan(0.5 * float(mdata["camera_angle_x"])),
+            / jnp.tan(0.5 * float(mdata["camera_angle_x"])),
             width=images[split.name].shape[2],
             height=images[split.name].shape[1],
         )

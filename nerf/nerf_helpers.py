@@ -100,36 +100,43 @@ def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
 
 #@functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched(tensor, f, chunksize, use_vmap):
-    tensor_diff = -tensor.shape[0] % chunksize
-    initial_len = tensor.shape[0]
-    tensor_len = tensor.shape[0] + tensor_diff
-    tensor = jnp.pad(tensor, ((0, tensor_diff), (0, 0)), "constant")
-    tensor = tensor.reshape(tensor_len // chunksize, chunksize, *tensor.shape[1:])
-
-    if use_vmap:
-        out = vmap(f)(tensor)  # this unfortunately keeps each batch in memory...
+    if tensor.shape[0] < chunksize:
+        return f(out)
     else:
-        out = jax.lax.map(f, tensor)
+        tensor_diff = -tensor.shape[0] % chunksize
+        initial_len = tensor.shape[0]
+        tensor_len = tensor.shape[0] + tensor_diff
+        tensor = jnp.pad(tensor, ((0, tensor_diff), (0, 0)), "constant")
+        tensor = tensor.reshape(tensor_len // chunksize, chunksize, *tensor.shape[1:])
 
-    out = out.reshape(-1, *out.shape[2:])[:initial_len]
-    return out
+        if use_vmap:
+            out = vmap(f)(tensor)  # this unfortunately keeps each batch in memory...
+        else:
+            out = jax.lax.map(f, tensor)
+
+        out = out.reshape(-1, *out.shape[2:])[:initial_len]
+        return out
 
 
 #@functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched_rng(tensor, f, chunksize, use_vmap, rng):
-    tensor_diff = -tensor.shape[0] % chunksize
-    initial_len = tensor.shape[0]
-    tensor_len = tensor.shape[0] + tensor_diff
-    tensor = jnp.pad(tensor, ((0, tensor_diff), (0, 0)), "constant")
-    tensor = tensor.reshape(tensor_len // chunksize, chunksize, *tensor.shape[1:])
-
-    key, *subkey = jax.random.split(rng, tensor_len // chunksize + 1)
-    subkey = jnp.stack(subkey)
-
-    if use_vmap:
-        out = vmap(f)((tensor, subkey))  # kinda gross imo
+    if tensor.shape[0] < chunksize:
+        key, subkey = jax.random.split(rng)
+        return f((tensor, subkey)), key
     else:
-        out = jax.lax.map(f, (tensor, subkey))
+        tensor_diff = -tensor.shape[0] % chunksize
+        initial_len = tensor.shape[0]
+        tensor_len = tensor.shape[0] + tensor_diff
+        tensor = jnp.pad(tensor, ((0, tensor_diff), (0, 0)), "constant")
+        tensor = tensor.reshape(tensor_len // chunksize, chunksize, *tensor.shape[1:])
 
-    out = out.reshape(-1, *out.shape[2:])[:initial_len]
-    return out, key
+        key, *subkey = jax.random.split(rng, tensor_len // chunksize + 1)
+        subkey = jnp.stack(subkey)
+
+        if use_vmap:
+            out = vmap(f)((tensor, subkey))  # kinda gross imo
+        else:
+            out = jax.lax.map(f, (tensor, subkey))
+
+        out = out.reshape(-1, *out.shape[2:])[:initial_len]
+        return out, key

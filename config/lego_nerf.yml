@@ -4,7 +4,7 @@ experiment:
 
   train_iters: 200000
 
-  jit_loop: 16
+  jit_loop: 1
 
   validate_every: 100
 
@@ -82,7 +82,7 @@ nerf:
 
     num_random_rays: 1024
 
-    chunksize: 4096 # 16192
+    chunksize: 16192 # 16192
 
     perturb: True
 
@@ -100,7 +100,7 @@ nerf:
     
     use_viewdirs: True
 
-    chunksize: 16192
+    chunksize: 16192 # 16192
 
     perturb: False
 

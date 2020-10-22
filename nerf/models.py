@@ -17,7 +17,13 @@ def compute_embedding_size(
 
 
 def linear(size, name):
-    return hk.Linear(size, name=name, b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"))
+    return hk.Linear(
+        size,
+        name=name,
+        w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal"),
+        b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal"),
+    )
+
 
 class FlexibleNeRFModel(hk.Module):
     def __init__(

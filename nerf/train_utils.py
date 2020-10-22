@@ -103,7 +103,7 @@ def predict_and_render_radiance(
             subrng,
             not options.perturb,
         )
-        jax.lax.stop_gradient(z_samples)
+        #jax.lax.stop_gradient(z_samples)
 
         z_vals = jax.lax.sort(
             jnp.concatenate((z_vals, z_samples), axis=-1), dimension=-1

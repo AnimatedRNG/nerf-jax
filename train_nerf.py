@@ -4,6 +4,7 @@ import argparse
 import functools
 from pathlib import Path
 from datetime import datetime
+from collections import namedtuple
 
 import numpy as np
 import yaml
@@ -11,6 +12,7 @@ from box import Box
 import jax
 from jax import jit, vmap, pmap, grad, value_and_grad
 import jax.numpy as jnp
+from jax.tree_util import register_pytree_node
 from jax.experimental.optimizers import adam
 import haiku as hk
 
@@ -22,6 +24,10 @@ from nerf import loader, sampler
 from nerf import run_one_iter_of_nerf, run_network
 from nerf import FlexibleNeRFModel, compute_embedding_size
 from reference import torch_to_jax
+
+
+Losses = namedtuple("Losses", ["coarse_loss", "fine_loss"])
+register_pytree_node(Losses, lambda xs: (tuple(xs), None), lambda _, xs: Losses(*xs))
 
 
 def create_networks(config):
@@ -96,12 +102,12 @@ def train_nerf(config):
 
     # create models
     model_coarse, model_fine, coarse_embedding, fine_embedding = create_networks(config)
-    model_coarse_params, model_fine_params = load_networks_from_torch(
-        "checkpoint/checkpoint00000.ckpt"
+    #model_coarse_params, model_fine_params = load_networks_from_torch(
+    #    "checkpoint/checkpoint00000.ckpt"
+    #)
+    model_coarse_params, model_fine_params = init_networks(
+       rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
     )
-    # model_coarse_params, model_fine_params = init_networks(
-    #    rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
-    # )
 
     model_coarse, model_fine = (
         hk.without_apply_rng(model_coarse),
@@ -139,7 +145,6 @@ def train_nerf(config):
         dtype=jnp.uint32,
     )
 
-    # @jit
     def loss_fn(f_rng, cp, fp, image_id):
         H, W, focal = (
             intrinsics["train"].height,
@@ -179,10 +184,12 @@ def train_nerf(config):
             rendered_images[..., 9:10],
         )
 
-        loss = jnp.mean(((target_s[..., :3] - rgb_coarse) ** 2.0).flatten())
+        coarse_loss = jnp.mean(((target_s[..., :3] - rgb_coarse) ** 2.0).flatten())
+        loss = coarse_loss
         if config.nerf.train.num_fine > 0:
-            loss = loss + jnp.mean(((target_s[..., :3] - rgb_fine) ** 2.0).flatten())
-        return loss
+            fine_loss = jnp.mean(((target_s[..., :3] - rgb_fine) ** 2.0).flatten())
+            loss = loss + fine_loss
+        return loss, Losses(coarse_loss=coarse_loss, fine_loss=fine_loss)
 
     @jit
     def validation(f_rng, cp, fp, image_id):
@@ -222,8 +229,8 @@ def train_nerf(config):
 
         return rgb_coarse, rgb_fine
 
-    @functools.partial(jit, static_argnums=(2,))
-    def update_loop(rng, optimizer_state, num_iterations):
+    @jit
+    def update_loop(rng, optimizer_state, start, num_iterations):
         def inner(i, rng_optimizer_state):
             rng, optimizer_state, _ = rng_optimizer_state
 
@@ -231,20 +238,26 @@ def train_nerf(config):
 
             (model_coarse_params, model_fine_params) = get_params(optimizer_state)
 
-            loss, (cp_grad, fp_grad) = value_and_grad(loss_fn, argnums=(1, 2))(
-                subrng, model_coarse_params, model_fine_params, train_image_seq[i]
-            )
+            (_, losses), (cp_grad, fp_grad) = value_and_grad(
+                loss_fn, argnums=(1, 2), has_aux=True
+            )(subrng, model_coarse_params, model_fine_params, train_image_seq[i])
 
             optimizer_state = update(i, (cp_grad, fp_grad), optimizer_state)
 
-            return rng, optimizer_state, loss
+            return rng, optimizer_state, losses
 
-        return jax.lax.fori_loop(0, num_iterations, inner, (rng, optimizer_state, 0.0))
+        return jax.lax.fori_loop(
+            start,
+            start + num_iterations,
+            inner,
+            (rng, optimizer_state, Losses(coarse_loss=0.0, fine_loss=0.0)),
+        )
 
     for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
-        rng, optimizer_state, loss = update_loop(
-            rng, optimizer_state, config.experiment.jit_loop
+        rng, optimizer_state, losses = update_loop(
+            rng, optimizer_state, i, config.experiment.jit_loop
         )
+        loss = losses.coarse_loss + losses.fine_loss
 
         # Validation
         if (
@@ -254,6 +267,8 @@ def train_nerf(config):
             tqdm.write(f"Iter {i}: Loss {loss}")
 
         writer.add_scalar("train/loss", loss, i)
+        writer.add_scalar("train/coarse_loss", losses.coarse_loss, i)
+        writer.add_scalar("train/fine_loss", losses.fine_loss, i)
 
         if i % config.experiment.validate_every == 0:
             start = time.time()

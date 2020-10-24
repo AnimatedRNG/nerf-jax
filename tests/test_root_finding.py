@@ -12,21 +12,11 @@ def create_sphere(pt, origin=jnp.array([0.0, 0.0, 0.0]), radius=2.0):
     return jnp.linalg.norm(pt - origin, ord=2) - radius
 
 
-def test_sphere_trace_naive():
-    ro = jnp.array([-4.0, 0.0, -1.0])
-    rd = jnp.array([1.0, 0.0, 0.0])
+def perform_radius_test(fn, initial_radius, target_radius):
+    params = [jnp.array([0.0, 0.0, 0.0]), jnp.array(initial_radius)]
 
-    params = [jnp.array([0.0, 0.0, 0.0]), jnp.array(2.0)]
+    radius_fwd = lambda origin, radius: jnp.linalg.norm(fn(origin, radius), ord=2)
 
-    pt = sphere_trace_naive(create_sphere, ro, rd, 5, *params)
-
-    assert abs(jnp.linalg.norm(pt, ord=2) - 2.0) < 1e-3
-
-    radius_fwd = lambda origin, radius: jnp.linalg.norm(
-        sphere_trace_naive(create_sphere, ro, rd, 20, origin, radius), ord=2
-    )
-
-    target_radius = 3
     lr = jnp.array(1e-1)
 
     grad_program = jit(
@@ -42,35 +32,33 @@ def test_sphere_trace_naive():
     assert abs(radius_fwd(*params) - target_radius) < 1e-3
 
 
+def test_sphere_trace_naive():
+    ro = jnp.array([-4.0, 0.0, -1.0])
+    rd = jnp.array([1.0, 0.0, 0.0])
+
+    fn = lambda origin, radius: sphere_trace_naive(
+        create_sphere, ro, rd, 20, origin, radius
+    )
+
+    perform_radius_test(fn, 2.0, 3.0)
+
+
 def test_sphere_trace():
     ro = jnp.array([-4.0, 0.0, -1.0])
     rd = jnp.array([1.0, 0.0, 0.0])
 
-    params = [jnp.array([0.0, 0.0, 0.0]), jnp.array(2.0)]
+    fn = lambda origin, radius: sphere_trace(create_sphere, ro, rd, 0.0, origin, radius)
 
-    pt = sphere_trace(create_sphere, ro, rd, *params)
+    perform_radius_test(fn, 2.0, 3.0)
 
-    assert abs(jnp.linalg.norm(pt, ord=2) - 2.0) < 1e-3
 
-    # test as above
+def test_sphere_trace_iso():
+    ro = jnp.array([-4.0, 0.0, -1.0])
+    rd = jnp.array([1.0, 0.0, 0.0])
 
-    radius_fwd = lambda origin, radius: jnp.linalg.norm(
-        sphere_trace(create_sphere, ro, rd, origin, radius), ord=2
-    )
+    fn = lambda iso: lambda origin, radius: sphere_trace(create_sphere, ro, rd, iso, origin, radius)
 
-    target_radius = 3
-    lr = jnp.array(1e-1)
-
-    grad_program = jit(
-        grad(
-            lambda origin, radius: (target_radius - radius_fwd(origin, radius)) ** 2,
-            argnums=(1,),
-        )
-    )
-
-    for i in range(100):
-        gradient = grad_program(params[0], params[1])[0]
-        params[1] = params[1] - gradient * lr
-        #print(f"gradient on iteration {i}: {gradient}. Radius: {params[1]}")
-
-    assert abs(radius_fwd(*params) - target_radius) < 1e-3
+    # will re-jit, but that's because of the nested call
+    # in general, won't re-jit on different isosurface values
+    for i in range(5):
+        perform_radius_test(fn(i / 5.0), 2.0, 3.0)

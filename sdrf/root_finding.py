@@ -24,18 +24,18 @@ def sphere_trace(sdf, ro, rd, *params):
 
 
 # @functools.partial(jit, static_argnums=(0,))
-@functools.partial(jax.custom_vjp, nondiff_argnums=(0, 1, 2))
-def sphere_trace_depth(sdf, ro, rd, *params):
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0, 1, 2, 3))
+def sphere_trace_depth(sdf, ro, rd, iso, *params):
     def cond_fun(carry):
         dist, _, iteration, _ = carry
-        abs_dist = jnp.abs(dist)
+        abs_dist = jnp.abs(dist - iso)
         return (iteration < 30) & (abs_dist < 1e10) & (abs_dist > 1e-3)
 
     def body_fun(carry):
         old_dist, old_depth, iteration, old_pt = carry
         depth = old_depth + old_dist
         pt = depth * rd + ro
-        dist = sdf(pt, *params)
+        dist = sdf(pt, *params) - iso
         return (dist, depth, iteration + 1, pt)
 
     termination_dist, depth, _, _ = jax.lax.while_loop(
@@ -45,14 +45,16 @@ def sphere_trace_depth(sdf, ro, rd, *params):
     return depth
 
 
-def sphere_trace_depth_fwd(sdf, ro, rd, *params):
-    depth = sphere_trace_depth(sdf, ro, rd, *params)
+def sphere_trace_depth_fwd(sdf, ro, rd, iso, *params):
+    depth = sphere_trace_depth(
+        lambda pt, *params: sdf(pt, *params) - iso, ro, rd, 0.0, *params
+    )
 
     return depth, (depth, *params)
 
 
 # as described in (Niemeyer, et al. 2020)
-def sphere_trace_depth_rev_paper(sdf, ro, rd, res, g):
+def sphere_trace_depth_rev_paper(sdf, ro, rd, iso, res, g):
     depth, *params = res
 
     pt = depth * rd + ro

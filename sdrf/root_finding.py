@@ -28,7 +28,8 @@ def sphere_trace(sdf, ro, rd, *params):
 def sphere_trace_depth(sdf, ro, rd, *params):
     def cond_fun(carry):
         dist, _, iteration, _ = carry
-        return (iteration < 30) & (dist < 1e10) & (dist > 1e-3)
+        abs_dist = jnp.abs(dist)
+        return (iteration < 30) & (abs_dist < 1e10) & (abs_dist > 1e-3)
 
     def body_fun(carry):
         old_dist, old_depth, iteration, old_pt = carry
@@ -37,7 +38,9 @@ def sphere_trace_depth(sdf, ro, rd, *params):
         dist = sdf(pt, *params)
         return (dist, depth, iteration + 1, pt)
 
-    _, depth, _, _ = jax.lax.while_loop(cond_fun, body_fun, (sdf(ro), 0.0, 0, ro))
+    termination_dist, depth, _, _ = jax.lax.while_loop(
+        cond_fun, body_fun, (sdf(ro), 0.0, 0, ro)
+    )
 
     return depth
 
@@ -53,15 +56,14 @@ def sphere_trace_depth_rev(sdf, ro, rd, res, g):
 
     pt = depth * rd + ro
 
-    _, vjp_f = vjp(sdf, pt, *params)
+    vjp_p = grad(sdf, argnums=(0,))
 
-    dp, *dtheta = vjp_f(jnp.ones(()))
+    dp = vjp_p(pt, *params)[0]
 
     u = (-1.0 / (dp @ rd.T)) * g
 
-    return tuple(
-        tree_map(lambda x: u * x, dparam_tree) for dparam_tree in dtheta
-    )
+    _, vjp_params = vjp(functools.partial(sdf, pt), *params)
+    return vjp_params(u)
 
 
 sphere_trace_depth.defvjp(sphere_trace_depth_fwd, sphere_trace_depth_rev)

@@ -28,14 +28,19 @@ def test_sphere_trace_naive():
 
     target_radius = 3
     lr = jnp.array(1e-1)
-    for i in range(100):
-        grad_program = grad(
+
+    grad_program = jit(
+        grad(
             lambda origin, radius: (target_radius - radius_fwd(origin, radius)) ** 2,
             argnums=(1,),
         )
+    )
+
+    for i in range(100):
         params[1] = params[1] - grad_program(params[0], params[1])[0] * lr
 
     assert abs(radius_fwd(*params) - target_radius) < 1e-3
+
 
 def test_sphere_trace():
     ro = jnp.array([-4.0, 0.0, -1.0])
@@ -55,12 +60,17 @@ def test_sphere_trace():
 
     target_radius = 3
     lr = jnp.array(1e-1)
-    for i in range(100):
-        grad_program = grad(
+
+    grad_program = jit(
+        grad(
             lambda origin, radius: (target_radius - radius_fwd(origin, radius)) ** 2,
             argnums=(1,),
         )
-        params[1] = params[1] - grad_program(params[0], params[1])[0] * lr
-        print(grad_program(params[0], params[1])[0], params[1])
+    )
+
+    for i in range(100):
+        gradient = grad_program(params[0], params[1])[0]
+        params[1] = params[1] - gradient * lr
+        #print(f"gradient on iteration {i}: {gradient}. Radius: {params[1]}")
 
     assert abs(radius_fwd(*params) - target_radius) < 1e-3

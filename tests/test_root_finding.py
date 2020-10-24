@@ -61,5 +61,6 @@ def test_sphere_trace():
             argnums=(1,),
         )
         params[1] = params[1] - grad_program(params[0], params[1])[0] * lr
+        print(grad_program(params[0], params[1])[0], params[1])
 
     assert abs(radius_fwd(*params) - target_radius) < 1e-3

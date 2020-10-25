@@ -39,7 +39,7 @@ def sphere_trace_depth(sdf, ro, rd, iso, *params):
         return (dist, depth, iteration + 1, pt)
 
     termination_dist, depth, _, _ = jax.lax.while_loop(
-        cond_fun, body_fun, (sdf(ro), 0.0, 0, ro)
+        cond_fun, body_fun, (sdf(ro, *params), 0.0, 0, ro)
     )
 
     return depth

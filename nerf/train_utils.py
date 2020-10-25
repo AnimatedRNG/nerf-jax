@@ -4,11 +4,12 @@ import jax.numpy as jnp
 from jax import jit, vmap
 import functools
 
-from .nerf_helpers import positional_encoding, map_batched, map_batched_rng, sample_pdf
+from .nerf_helpers import positional_encoding, sample_pdf
 from .volume_render import volume_render_radiance_field
+from util import map_batched, map_batched_rng
 
 
-#@functools.partial(jit, static_argnums=(0, 3, 4, 5))
+# @functools.partial(jit, static_argnums=(0, 3, 4, 5))
 def run_network(
     network_fn,
     pts,
@@ -39,8 +40,8 @@ def run_network(
     return radiance_field
 
 
-#@functools.partial(jax.profiler.trace_function, name="predict_and_render_radiance")
-#@functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
+# @functools.partial(jax.profiler.trace_function, name="predict_and_render_radiance")
+# @functools.partial(jax.jit, static_argnums=(1, 2, 3, 4))
 def predict_and_render_radiance(
     ray_batch, model_coarse, model_fine, options, model_options, rng
 ):
@@ -103,7 +104,7 @@ def predict_and_render_radiance(
             subrng,
             not options.perturb,
         )
-        #jax.lax.stop_gradient(z_samples)
+        # jax.lax.stop_gradient(z_samples)
 
         z_vals = jax.lax.sort(
             jnp.concatenate((z_vals, z_samples), axis=-1), dimension=-1

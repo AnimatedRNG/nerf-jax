@@ -19,11 +19,11 @@ import haiku as hk
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
-from nerf import get_ray_bundle
 from nerf import loader, sampler
 from nerf import run_one_iter_of_nerf, run_network
 from nerf import FlexibleNeRFModel, compute_embedding_size
 from reference import torch_to_jax
+from util import get_ray_bundle
 
 
 Losses = namedtuple("Losses", ["coarse_loss", "fine_loss"])
@@ -102,11 +102,11 @@ def train_nerf(config):
 
     # create models
     model_coarse, model_fine, coarse_embedding, fine_embedding = create_networks(config)
-    #model_coarse_params, model_fine_params = load_networks_from_torch(
+    # model_coarse_params, model_fine_params = load_networks_from_torch(
     #    "checkpoint/checkpoint00000.ckpt"
-    #)
+    # )
     model_coarse_params, model_fine_params = init_networks(
-       rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
+        rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
     )
 
     model_coarse, model_fine = (

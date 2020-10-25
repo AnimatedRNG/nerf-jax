@@ -14,7 +14,7 @@ from jax import jit, vmap
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node
 
-from .nerf_helpers import get_ray_bundle
+from util import get_ray_bundle
 
 
 Intrinsics = namedtuple("Intrinsics", ["focal_length", "width", "height"])

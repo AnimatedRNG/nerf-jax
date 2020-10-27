@@ -17,23 +17,53 @@ def gaussian_pdf(x, mu, sigma):
     )
 
 
-def stratified_render(sdf, appearance, ro, rd, params, rng, sigma, num_samples):
-    # 1) Create discrete Gaussian kernel, with `num_samples` bins
-    # 2) Sample from each bin (uniform distribution)
-    # 3) Weighted sum of samples with previously-mentioned Gaussian kernel
-    pass
+class GaussianSampler(object):
+    def __init__(self, sigma):
+        self.sigma = sigma
+
+    def sample(self, rng, num_samples):
+        return jax.random.normal(rng, (num_samples,)) * self.sigma
+
+    def pdf(self, x):
+        return gaussian_pdf(x, 0.0, self.sigma)
 
 
-def importance_sample_render(
-    sdf, appearance, ro, rd, params, rng, phi, sigma, num_samples
+class LinearSampler(object):
+    def __init__(self, support):
+        self.support = support
+
+    def sample(self, rng, num_samples):
+        return jnp.linspace(-self.support, self.support, num_samples)
+
+    def pdf(self, x):
+        return 1.0 / (self.support * 2)
+
+
+class StratifiedSampler(object):
+    def __init__(self, support):
+        self.support = support
+
+    def sample(self, rng, num_samples):
+        partition_size = (2 * self.support) / num_samples
+        return jnp.linspace(
+            -self.support, self.support, num_samples
+        ) + jax.random.uniform(
+            rng, (num_samples,), minval=-partition_size / 2, maxval=partition_size / 2
+        )
+
+    def pdf(self, x):
+        return 1.0 / (self.support * 2)
+
+def additive_render(
+    sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples
 ):
     # 1) \phi(d) is sdf-to-density function (almost certainly a Gaussian)
     # 2) We would want to compute the expectation of \phi(d) on a uniform
     #    distribution with many samples. This is slow, so instead we
     #    importance sample \phi(d) on a distribution q(d) that is very similar
     #    to it
-    xs = jax.random.normal(rng, (num_samples,)) * sigma
-    #xs = jnp.linspace(-sigma, sigma, num_samples)
+    xs = sampler.sample(rng, num_samples)
+
     intensity = lambda pt: appearance(pt, rd)
     depth = lambda pt: jnp.linalg.norm(pt - ro, ord=2, axis=-1, keepdims=True)
     attribs = (intensity, depth)
@@ -54,7 +84,7 @@ def importance_sample_render(
         for attrib in vmap(
             lambda x, pt, valid: tuple(
                 # should we just use x here rather than resampling?
-                valid * attrib(pt) * (phi(x) / gaussian_pdf(x, 0.0, sigma))
+                valid * attrib(pt) * (phi(x) / sampler.pdf(x))
                 for attrib in attribs
             )
         )(xs, pts, valid_mask)

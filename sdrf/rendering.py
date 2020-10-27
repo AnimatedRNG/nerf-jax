@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 
+from util import map_batched_rng
 from .root_finding import sphere_trace
 
 
@@ -31,15 +32,48 @@ def importance_sample_render(
     #    distribution with many samples. This is slow, so instead we
     #    importance sample \phi(d) on a distribution q(d) that is very similar
     #    to it
-    xs = jax.random.normal(rng, num_samples) * sigma
-    intensity = lambda x: appearance(x, rd)
+    xs = jax.random.normal(rng, (num_samples,)) * sigma
+    #xs = jnp.linspace(-sigma, sigma, num_samples)
+    intensity = lambda pt: appearance(pt, rd)
+    depth = lambda pt: jnp.linalg.norm(pt - ro, ord=2, axis=-1, keepdims=True)
+    attribs = (intensity, depth)
     intersect = lambda iso: sphere_trace(sdf, ro, rd, iso, params)
-    return (
-        jnp.sum(
-            vmap(
-                lambda x: intensity(x) * (phi(intersect(x)) / gaussian_pdf(x, sigma)),
-                xs,
-            )
+
+    # mask out the isosurfaces that don't intersect with the ray
+    pts = vmap(intersect)(xs)
+    error = vmap(lambda pt, x: jnp.abs(sdf(pt, params) - x))(pts, xs)
+    valid_mask = error < 1e-2
+    num_valid_samples = valid_mask.sum()
+
+    return tuple(
+        jax.lax.select(
+            num_valid_samples != 0,
+            jnp.sum(attrib, axis=-2) / num_valid_samples,
+            jnp.zeros(attrib.shape[-1]),
         )
-        / num_samples
+        for attrib in vmap(
+            lambda x, pt, valid: tuple(
+                # should we just use x here rather than resampling?
+                valid * attrib(pt) * (phi(x) / gaussian_pdf(x, 0.0, sigma))
+                for attrib in attribs
+            )
+        )(xs, pts, valid_mask)
     )
+
+
+def render_img(render_fn, rng, ray_bundle, chunksize):
+    ro, rd = ray_bundle
+    ro_flat, rd_flat = ro.reshape(-1, *ro.shape[2:]), rd.reshape(-1, *rd.shape[2:])
+    bundle = jnp.stack((ro_flat, rd_flat), axis=-1)
+
+    (rgb, depth), rng = map_batched_rng(
+        bundle,
+        lambda chunk_rng: render_fn(
+            chunk_rng[0][:, 0], chunk_rng[0][:, 1], chunk_rng[1]
+        ),
+        chunksize,
+        True,
+        rng,
+    )
+
+    return (rgb.reshape(*ro.shape[:2], -1), depth.reshape(*ro.shape[:2], -1)), rng

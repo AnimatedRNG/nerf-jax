@@ -19,26 +19,28 @@ def sphere_trace_naive(sdf, ro, rd, iterations, *params):
     return p
 
 
-def sphere_trace(sdf, ro, rd, *params):
-    return sphere_trace_depth(sdf, ro, rd, *params) * rd + ro
+def sphere_trace(sdf, ro, rd, iso, *params):
+    return sphere_trace_depth(sdf, ro, rd, iso, *params) * rd + ro
 
 
 # @functools.partial(jit, static_argnums=(0,))
-@functools.partial(jax.custom_vjp, nondiff_argnums=(0, 1, 2, 3))
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
 def sphere_trace_depth(sdf, ro, rd, iso, *params):
+    scalarize = lambda x: x.sum()
+
     def cond_fun(carry):
         dist, _, iteration, _ = carry
-        abs_dist = jnp.abs(dist - iso)
+        abs_dist = scalarize(jnp.abs(dist - iso))
         return (iteration < 30) & (abs_dist < 1e10) & (abs_dist > 1e-3)
 
     def body_fun(carry):
         old_dist, old_depth, iteration, old_pt = carry
-        depth = old_depth + old_dist
+        depth = scalarize((old_depth + old_dist))
         pt = depth * rd + ro
         dist = sdf(pt, *params) - iso
         return (dist, depth, iteration + 1, pt)
 
-    termination_dist, depth, _, _ = jax.lax.while_loop(
+    _, depth, _, _ = jax.lax.while_loop(
         cond_fun, body_fun, (sdf(ro, *params), 0.0, 0, ro)
     )
 
@@ -50,12 +52,13 @@ def sphere_trace_depth_fwd(sdf, ro, rd, iso, *params):
         lambda pt, *params: sdf(pt, *params) - iso, ro, rd, 0.0, *params
     )
 
-    return depth, (depth, *params)
+    # return depth, (depth, *params)
+    return depth, (ro, rd, iso, depth, *params)
 
 
 # as described in (Niemeyer, et al. 2020)
-def sphere_trace_depth_rev_paper(sdf, ro, rd, iso, res, g):
-    depth, *params = res
+def sphere_trace_depth_rev_paper(sdf, res, g):
+    ro, rd, iso, depth, *params = res
 
     pt = depth * rd + ro
 
@@ -66,14 +69,14 @@ def sphere_trace_depth_rev_paper(sdf, ro, rd, iso, res, g):
     u = (-1.0 / (dp @ rd.T)) * g
 
     _, vjp_params = vjp(functools.partial(sdf, pt), *params)
-    return vjp_params(u)
+    return (None, None, None, *vjp_params(u))
 
 
 # TODO: rephrase as a jvp at some point?
 # not really benefitting from the `vjp_p` call, since adjoints are
 # different...
-def sphere_trace_depth_rev_single(sdf, ro, rd, res, g):
-    depth, *params = res
+def sphere_trace_depth_rev_single(sdf, res, g):
+    ro, rd, iso, depth, *params = res
 
     pt = depth * rd + ro
 
@@ -83,7 +86,12 @@ def sphere_trace_depth_rev_single(sdf, ro, rd, res, g):
 
     u = (-1.0 / (dp @ rd.T)) * g
 
-    return tuple(tree_map(lambda x: u * x, dparam_tree) for dparam_tree in dtheta)
+    return (
+        None,
+        None,
+        None,
+        *tuple(tree_map(lambda x: u * x, dparam_tree) for dparam_tree in dtheta),
+    )
 
 
 sphere_trace_depth.defvjp(sphere_trace_depth_fwd, sphere_trace_depth_rev_paper)

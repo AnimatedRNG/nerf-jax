@@ -6,14 +6,16 @@ import jax.numpy as jnp
 from jax import jit, vmap, grad
 
 from sdrf import (
+    additive_integrator,
     sphere_trace_naive,
     sphere_trace,
-    additive_render,
+    render,
     render_img,
     gaussian_pdf,
+    ExponentialSampler,
     GaussianSampler,
     LinearSampler,
-    StratifiedSampler
+    StratifiedSampler,
 )
 from util import get_ray_bundle, look_at
 
@@ -45,15 +47,15 @@ def test_render_sphere():
     radius = jnp.array([3.0])
 
     # sigma used for importance sampling
-    importance_sigma = 1e-2
-    phi_sigma = 1e-2
+    importance_sigma = 1e-1
+    phi_sigma = 1e-1
 
     num_samples = 8
 
     geometry = lambda x, params: create_sphere(x, *params)
 
     # surface is solid white
-    #appearance = lambda pt, rd: jnp.array([1.0, 1.0, 1.0])
+    # appearance = lambda pt, rd: jnp.array([1.0, 1.0, 1.0])
 
     # Some Lambertian lighting
     light_pos = jnp.array([-8.0, -4.0, 0.0])
@@ -81,15 +83,20 @@ def test_render_sphere():
     )
     appearance = lambda pt, rd: diffuse(pt) + specular(pt, rd)
 
+    """phi = lambda dist: gaussian_pdf(
+        jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, phi_sigma
+    )"""
     phi = lambda dist: gaussian_pdf(
         jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, phi_sigma
     )
 
-    #sampler = GaussianSampler(importance_sigma)
-    #sampler = LinearSampler(importance_sigma)
-    sampler = StratifiedSampler(importance_sigma)
+    # sampler = GaussianSampler(importance_sigma)
+    # sampler = ExponentialSampler(importance_sigma)
+    sampler = LinearSampler(importance_sigma)
+    # sampler = StratifiedSampler(importance_sigma)
+    print(sampler.sample(None, num_samples))
 
-    render_fn = lambda ro, rd, rng: additive_render(
+    render_fn = lambda ro, rd, rng: render(
         sampler,
         geometry,
         appearance,
@@ -99,6 +106,7 @@ def test_render_sphere():
         rng,
         phi,
         num_samples,
+        True,
     )
 
     # with jax.disable_jit():
@@ -111,5 +119,5 @@ def test_render_sphere():
     import cv2
 
     cv2.imshow("rgb", np.array(rgb))
-    #cv2.imshow("depth", np.array(depth) / 10.0)
+    cv2.imshow("depth", np.array(depth) / 10.0)
     cv2.waitKey(1000)

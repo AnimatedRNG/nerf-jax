@@ -6,6 +6,8 @@ import jax
 import jax.numpy as jnp
 import haiku as hk
 
+from nerf import positional_encoding
+
 
 def get_fan(shape):
     if len(shape) < 1:
@@ -123,6 +125,7 @@ class Siren(hk.Module):
         num_hidden_layers,
         hidden_features,
         outermost_linear=True,
+        nonlinearity="sine",
         name=None,
     ):
         super().__init__(name=name)
@@ -131,24 +134,36 @@ class Siren(hk.Module):
         self.num_hidden_layers = num_hidden_layers
         self.hidden_features = hidden_features
         self.outermost_linear = outermost_linear
+        self.nonlinearity = nonlinearity
 
     def __call__(self, coords):
-        sine_layer = lambda x: jnp.sin(30 * x)
-
-        w_init_0 = SineInitializer(True)
         b_init = PyTorchBiasInitializer()
+        if self.nonlinearity == "sine":
+            nl = lambda x: jnp.sin(30 * x)
 
-        w_init_n = SineInitializer(False)
+            w_init_0 = SineInitializer(True)
+            w_init_n = SineInitializer(False)
+        elif self.nonlinearity == "relu":
+            nl = lambda x: jax.nn.relu(x)
+            w_init_0 = w_init_n = hk.initializers.VarianceScaling(
+                2.0, "fan_in", "truncated_normal"
+            )
+        else:
+            assert False
 
-        x = sine_layer(
+        x = coords
+        if self.nonlinearity == "relu":
+            x = positional_encoding(x, 10)
+
+        x = nl(
             hk.Linear(
                 self.hidden_features, w_init=w_init_0, b_init=b_init, name="layer_0",
-            )(coords)
+            )(x)
         )
 
         # turn this into a jax.lax.scan?
         for i in range(self.num_hidden_layers):
-            x = sine_layer(
+            x = nl(
                 hk.Linear(
                     self.hidden_features,
                     w_init=w_init_n,
@@ -165,6 +180,6 @@ class Siren(hk.Module):
         )(x)
 
         if self.outermost_linear:
-            x = sine_layer(x)
+            x = nl(x)
 
         return x

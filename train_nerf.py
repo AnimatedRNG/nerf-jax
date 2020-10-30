@@ -34,33 +34,33 @@ def create_networks(config):
     coarse_embedding = compute_embedding_size(
         include_input_xyz=True,
         include_input_dir=True,
-        num_encoding_fn_xyz=config.model.coarse.num_encoding_fn_xyz,
-        num_encoding_fn_dir=config.model.coarse.num_encoding_fn_dir,
+        num_encoding_fn_xyz=config.nerf.model.coarse.num_encoding_fn_xyz,
+        num_encoding_fn_dir=config.nerf.model.coarse.num_encoding_fn_dir,
     )
     fine_embedding = compute_embedding_size(
         include_input_xyz=True,
         include_input_dir=True,
-        num_encoding_fn_xyz=config.model.fine.num_encoding_fn_xyz,
-        num_encoding_fn_dir=config.model.fine.num_encoding_fn_dir,
+        num_encoding_fn_xyz=config.nerf.model.fine.num_encoding_fn_xyz,
+        num_encoding_fn_dir=config.nerf.model.fine.num_encoding_fn_dir,
     )
 
     model_coarse = hk.transform(
         lambda x: FlexibleNeRFModel(
-            num_encoding_fn_xyz=config.model.coarse.num_encoding_fn_xyz,
-            num_encoding_fn_dir=config.model.coarse.num_encoding_fn_dir,
+            num_encoding_fn_xyz=config.nerf.model.coarse.num_encoding_fn_xyz,
+            num_encoding_fn_dir=config.nerf.model.coarse.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
-            use_viewdirs=config.model.coarse.use_viewdirs,
+            use_viewdirs=config.nerf.model.coarse.use_viewdirs,
         )(x)
     )
 
     model_fine = hk.transform(
         lambda x: FlexibleNeRFModel(
-            num_encoding_fn_xyz=config.model.fine.num_encoding_fn_xyz,
-            num_encoding_fn_dir=config.model.fine.num_encoding_fn_dir,
+            num_encoding_fn_xyz=config.nerf.model.fine.num_encoding_fn_xyz,
+            num_encoding_fn_dir=config.nerf.model.fine.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
-            use_viewdirs=config.model.fine.use_viewdirs,
+            use_viewdirs=config.nerf.model.fine.use_viewdirs,
         )(x)
     )
 
@@ -124,10 +124,10 @@ def train_nerf(config):
     print("...done!")
 
     # TODO: figure out optimizer
-    num_decay_steps = config.model.optimizer.lr_decay * 1000
+    num_decay_steps = config.nerf.model.optimizer.lr_decay * 1000
     init_adam, update, get_params = adam(
-        lambda iteration: config.model.optimizer.initial_lr
-        * (config.model.optimizer.lr_decay_factor ** (iteration / num_decay_steps))
+        lambda iteration: config.nerf.model.optimizer.initial_lr
+        * (config.nerf.model.optimizer.lr_decay_factor ** (iteration / num_decay_steps))
     )
     optimizer_state = init_adam((model_coarse_params, model_fine_params))
 
@@ -170,7 +170,7 @@ def train_nerf(config):
             ray_origins,
             ray_directions,
             config.nerf.train,
-            config.model,
+            config.nerf.model,
             config.dataset.projection,
             f_rng[1],
             False,
@@ -213,7 +213,7 @@ def train_nerf(config):
             ray_origins,
             ray_directions,
             config.nerf.validation,
-            config.model,
+            config.nerf.model,
             config.dataset.projection,
             f_rng,
             True,

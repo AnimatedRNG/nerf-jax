@@ -20,8 +20,8 @@ def linear(size, name):
     return hk.Linear(
         size,
         name=name,
-        w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal"),
-        b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "truncated_normal"),
+        w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+        b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
     )
 
 

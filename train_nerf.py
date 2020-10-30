@@ -78,8 +78,8 @@ def init_networks(
     dummy_input_coarse = jnp.zeros((config.nerf.train.chunksize, sum(coarse_embedding)))
     dummy_input_fine = jnp.zeros((config.nerf.train.chunksize, sum(fine_embedding)))
 
-    coarse_params = model_coarse.init(rng, dummy_input_coarse)
-    fine_params = model_fine.init(rng, dummy_input_fine)
+    coarse_params = model_coarse.init(rng[0], dummy_input_coarse)
+    fine_params = model_fine.init(rng[1], dummy_input_fine)
 
     return (coarse_params, fine_params)
 
@@ -105,8 +105,9 @@ def train_nerf(config):
     # model_coarse_params, model_fine_params = load_networks_from_torch(
     #    "checkpoint/checkpoint00000.ckpt"
     # )
+    rng, *subrng = jax.random.split(rng, 3)
     model_coarse_params, model_fine_params = init_networks(
-        rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
+        subrng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
     )
 
     model_coarse, model_fine = (
@@ -156,7 +157,7 @@ def train_nerf(config):
             images["train"][image_id],
             poses["train"][image_id],
             intrinsics["train"],
-            rng,
+            f_rng[0],
             config.dataset.sampler,
         )
 
@@ -171,7 +172,7 @@ def train_nerf(config):
             config.nerf.train,
             config.model,
             config.dataset.projection,
-            f_rng,
+            f_rng[1],
             False,
         )
 
@@ -234,7 +235,7 @@ def train_nerf(config):
         def inner(i, rng_optimizer_state):
             rng, optimizer_state, _ = rng_optimizer_state
 
-            rng, subrng = jax.random.split(rng, 2)
+            rng, *subrng = jax.random.split(rng, 3)
 
             (model_coarse_params, model_fine_params) = get_params(optimizer_state)
 

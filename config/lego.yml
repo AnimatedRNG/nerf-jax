@@ -56,3 +56,42 @@ nerf:
     white_background: False
     radiance_field_noise_std: 0.
     lindisp: False
+sdrf:
+  eikonal:
+    scale: 1.0
+    num_samples: 4096
+  manifold:
+    scale: 1.0
+    num_samples: 4096
+  sampler:
+    kind: "gaussian"
+    linear:
+      support: 1.0E-1
+    stratified:
+      support: 1.0E-1
+    gaussian:
+      sigma: 1.0E-1
+  render:
+    phi:
+      initial_sigma: 1.0E-1
+      lr_decay: 250
+      lr_decay_factor: 0.1
+    num_samples: 8
+    truncation_distance: 1.0
+    additive: True
+    chunksize: 16192
+  model:
+    geometry:
+      num_layers: 4
+      hidden_size: 32
+      outermost_linear: False
+      activation: relu
+    appearance:
+      num_layers: 4
+      hidden_size: 32
+      outermost_linear: False
+      activation: relu
+    optimizer:
+      initial_lr: 5.0E-3
+      lr_decay: 250
+      lr_decay_factor: 0.1

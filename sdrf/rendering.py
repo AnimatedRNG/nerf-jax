@@ -75,7 +75,7 @@ class StratifiedSampler(object):
 
 
 def additive_integrator(samples, valid_mask):
-    return jnp.sum(samples, axis=-2) / valid_mask.sum()
+    return jnp.sum(samples, axis=-2) / (valid_mask.sum() + 1e-9)
 
 
 # def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, additive):

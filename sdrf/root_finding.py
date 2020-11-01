@@ -52,7 +52,7 @@ def sphere_trace_depth(sdf, ro, rd, iso, truncation, *params):
 def sphere_trace_depth_fwd(sdf, ro, rd, iso, truncation, *params):
     # why doesn't this just set the isosurface?
     depth = sphere_trace_depth(
-        lambda pt, *params: sdf(pt, *params) - iso, ro, rd, 0.0, truncation, *params
+        sdf, ro, rd, iso, truncation, *params
     )
 
     # return depth, (depth, *params)

@@ -24,13 +24,13 @@ def eikonal_loss(sdf, pts, sdf_params):
         pt, sdf_params
     )
     return jnp.mean(
-        vmap(lambda pt: (1.0 - jnp.linalg.norm(sdf_grad(pt)) ** 2.0))(pts), axis=0,
+        vmap(lambda pt: (1.0 - jnp.linalg.norm(sdf_grad(pt))) ** 2.0)(pts), axis=0,
     )
 
 
 def manifold_loss(sdf, pts, sdf_params):
     return jnp.mean(
-        vmap(lambda pt: jnp.exp(1e-2 * jnp.abs(sdf(pt, sdf_params))))(pts), axis=0
+        vmap(lambda pt: jnp.exp(-1e2 * jnp.abs(sdf(pt, sdf_params))))(pts), axis=0
     )
 
 

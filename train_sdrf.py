@@ -64,7 +64,8 @@ def init_networks(config, rng):
 
     return (
         SDRF(
-            geometry=lambda pt, params: geometry_fn.apply(params, pt),
+            # the sum is a bit odd, but it avoids issues with batch size (1,) vs ()
+            geometry=lambda pt, params: geometry_fn.apply(params, pt).sum(),
             appearance=lambda pt, rd, params: appearance_fn.apply(params, pt, rd),
         ),
         SDRFParams(geometry=geometry_params, appearance=appearance_params),
@@ -87,9 +88,9 @@ def train_sdrf(config):
     # TODO: figure out optimizer
     num_decay_steps = config.sdrf.model.optimizer.lr_decay * 1000
     init_adam, update, get_params = adam(
-        lambda iteration: config.sdrf.model.model.optimizer.initial_lr
+        lambda iteration: config.sdrf.model.optimizer.initial_lr
         * (
-            config.sdrf.model.model.optimizer.lr_decay_factor
+            config.sdrf.model.optimizer.lr_decay_factor
             ** (iteration / num_decay_steps)
         )
     )
@@ -150,19 +151,22 @@ def train_sdrf(config):
             manifold_loss(sdrf.geometry, manifold_samples, sdrf_params.geometry),
         )
 
-        return rgb_loss, (rgb_loss, e_loss, m_loss)
+        return (rgb_loss + e_loss + m_loss).sum(), (rgb_loss, e_loss, m_loss)
 
-    value_and_grad_fn = jit(value_and_grad)(loss_fn, argnums=(1,), has_aux=True)
+    value_and_grad_fn = lambda subrng, sdrf_params, train_image_seq, i: jit(
+        value_and_grad(loss_fn, argnums=(1,), has_aux=True)
+    )(subrng, sdrf_params, train_image_seq, i)
 
     for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
         rng, *subrng = jax.random.split(rng, 5)
-        sdrf_params = get_params(optimizer_state)
+        params = get_params(optimizer_state)
 
-        (loss, losses), sdrf_params = value_and_grad_fn(
-            subrng, sdrf_params, train_image_seq[i], i
+        (loss, losses), params = value_and_grad_fn(
+            subrng, params, train_image_seq[i], i
         )
+        params = params[0]
 
-        optimizer_state = update(i, sdrf_params, optimizer_state)
+        optimizer_state = update(i, params, optimizer_state)
 
         print(loss)
 

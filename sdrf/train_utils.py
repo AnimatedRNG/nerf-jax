@@ -11,24 +11,31 @@ SDRF = namedtuple("SDRF", ["geometry", "appearance"])
 register_pytree_node(SDRF, lambda xs: (tuple(xs), None), lambda _, xs: SDRF(*xs))
 
 
-def run_one_iter_of_sdrf(model, params, ray_origins, ray_directions, options, rng):
+def run_one_iter_of_sdrf(
+    model, params, ray_origins, ray_directions, iteration, options, rng
+):
     # reshape ro/rd
     ro = ray_origins.reshape((-1, 3))
     rd = ray_directions.reshape((-1, 3))
 
-    if options.sdrf.sampler.kind == "linear":
-        sampler = LinearSampler(options.sdrf.sampler.linear.support)
-    elif options.sdrf.sampler.kind == "stratified":
-        sampler = StratifiedSampler(options.sdrf.sampler.stratified.support)
-    elif options.sdrf.sampler.kind == "exponential":
+    if options.sampler.kind == "linear":
+        sampler = LinearSampler(options.sampler.linear.support)
+    elif options.sampler.kind == "stratified":
+        sampler = StratifiedSampler(options.sampler.stratified.support)
+    elif options.sampler.kind == "exponential":
         sampler = ExponentialSampler()
-    elif options.sdrf.sampler.kind == "gaussian":
-        sampler = GaussianSampler(options.sdrf.sampler.gaussian.sigma)
+    elif options.sampler.kind == "gaussian":
+        sampler = GaussianSampler(options.sampler.gaussian.sigma)
     else:
         raise Exception("Invalid sampler type")
 
+    sigma = (
+        options.render.phi.initial_sigma
+        * options.render.phi.decay_factor
+        ** (iteration / options.render.phi.num_decay_steps)
+    )
     phi = lambda dist: gaussian_pdf(
-        jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, options.sdrf.render.phi.sigma
+        jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, sigma
     )
 
     render_fn = lambda ro, rd, rng: render(
@@ -40,7 +47,7 @@ def run_one_iter_of_sdrf(model, params, ray_origins, ray_directions, options, rn
         params.geometry,
         rng,
         phi,
-        options.sdrf.render,
+        options.render,
     )
 
     (rgb, depth, rng) = map_batched_rng(

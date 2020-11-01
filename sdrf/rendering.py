@@ -172,3 +172,6 @@ SDRFParams = namedtuple("SDRFParams", ["geometry", "appearance"])
 register_pytree_node(
     SDRFParams, lambda xs: (tuple(xs), None), lambda _, xs: SDRFParams(*xs)
 )
+
+SDRF = namedtuple("SDRF", ["geometry", "appearance"])
+register_pytree_node(SDRF, lambda xs: (tuple(xs), None), lambda _, xs: SDRF(*xs))

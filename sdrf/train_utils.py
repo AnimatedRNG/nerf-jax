@@ -7,9 +7,6 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 
-SDRF = namedtuple("SDRF", ["geometry", "appearance"])
-register_pytree_node(SDRF, lambda xs: (tuple(xs), None), lambda _, xs: SDRF(*xs))
-
 
 def run_one_iter_of_sdrf(
     model, params, ray_origins, ray_directions, iteration, options, rng

@@ -151,7 +151,11 @@ def train_sdrf(config):
             manifold_loss(sdrf.geometry, manifold_samples, sdrf_params.geometry),
         )
 
-        return (rgb_loss + e_loss + m_loss).sum(), (rgb_loss, e_loss, m_loss)
+        losses = jnp.array([rgb_loss, e_loss, m_loss])
+
+        loss_weights = jnp.array([3e3, 5e1, 1e2])
+
+        return jnp.dot(losses, loss_weights), losses
 
     value_and_grad_fn = lambda subrng, sdrf_params, train_image_seq, i: jit(
         value_and_grad(loss_fn, argnums=(1,), has_aux=True)
@@ -168,7 +172,7 @@ def train_sdrf(config):
 
         optimizer_state = update(i, params, optimizer_state)
 
-        print(loss)
+        print(losses)
 
 
 def main():

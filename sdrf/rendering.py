@@ -78,18 +78,21 @@ def additive_integrator(samples, valid_mask):
     return jnp.sum(samples, axis=-2) / valid_mask.sum()
 
 
-def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, additive):
+# def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, additive):
+def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     # 1) \phi(d) is sdf-to-density function (almost certainly a Gaussian)
     # 2) We would want to compute the expectation of \phi(d) on a uniform
     #    distribution with many samples. This is slow, so instead we
     #    importance sample \phi(d) on a distribution q(d) that is very similar
     #    to it
-    xs = sampler.sample(rng, num_samples)
+    xs = sampler.sample(rng, options.num_samples)
 
     intensity = lambda pt: appearance(pt, rd, params.appearance)
     depth = lambda pt: jnp.linalg.norm(pt - ro, ord=2, axis=-1, keepdims=True)
     attribs = (intensity, depth)
-    intersect = lambda iso: sphere_trace(sdf, ro, rd, iso, params.geometry)
+    intersect = lambda iso: sphere_trace(
+        sdf, ro, rd, iso, options.truncation_distance, params.geometry
+    )
 
     # mask out the isosurfaces that don't intersect with the ray
     pts = vmap(intersect)(xs)
@@ -97,7 +100,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, addi
     valid_mask = error < 1e-2
     num_valid_samples = valid_mask.sum()
 
-    if additive:
+    if options.additive:
         return tuple(
             jax.lax.select(
                 num_valid_samples != 0,
@@ -127,7 +130,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, addi
         hs = -sorted_depths
         hs = index_add(hs, index[:-1], sorted_depths[1:])
         hs = index_update(hs, index[-1], hs[-2])
-        # hs = jnp.ones(num_samples) * (1.0 / num_valid_samples)
+        # hs = jnp.ones(options.num_samples) * (1.0 / num_valid_samples)
         os = vmap(lambda x, h, valid: valid * phi(x) * h)(sorted_xs, hs, sorted_valids)
         os = jnp.cumsum(os, axis=0)
 
@@ -163,6 +166,7 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
     )
 
     return (rgb.reshape(*ro.shape[:2], -1), depth.reshape(*ro.shape[:2], -1)), rng
+
 
 SDRFParams = namedtuple("SDRFParams", ["geometry", "appearance"])
 register_pytree_node(

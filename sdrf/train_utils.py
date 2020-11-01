@@ -40,8 +40,7 @@ def run_one_iter_of_sdrf(model, params, ray_origins, ray_directions, options, rn
         params.geometry,
         rng,
         phi,
-        options.sdrf.render.num_samples,
-        options.sdrf.render.additive,
+        options.sdrf.render,
     )
 
     (rgb, depth, rng) = map_batched_rng(

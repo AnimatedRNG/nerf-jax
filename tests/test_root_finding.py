@@ -36,8 +36,10 @@ def test_sphere_trace_naive():
     ro = jnp.array([-4.0, 0.0, -1.0])
     rd = jnp.array([1.0, 0.0, 0.0])
 
+    truncation_dist = 1.0
+
     fn = lambda origin, radius: sphere_trace_naive(
-        create_sphere, ro, rd, 20, origin, radius
+        create_sphere, ro, rd, 20, truncation_dist, origin, radius
     )
 
     perform_radius_test(fn, 2.0, 3.0)
@@ -47,7 +49,11 @@ def test_sphere_trace():
     ro = jnp.array([-4.0, 0.0, -1.0])
     rd = jnp.array([1.0, 0.0, 0.0])
 
-    fn = lambda origin, radius: sphere_trace(create_sphere, ro, rd, 0.0, origin, radius)
+    truncation_dist = 1.0
+
+    fn = lambda origin, radius: sphere_trace(
+        create_sphere, ro, rd, 0.0, truncation_dist, origin, radius
+    )
 
     perform_radius_test(fn, 2.0, 3.0)
 
@@ -56,7 +62,11 @@ def test_sphere_trace_iso():
     ro = jnp.array([-4.0, 0.0, -1.0])
     rd = jnp.array([1.0, 0.0, 0.0])
 
-    fn = lambda iso: lambda origin, radius: sphere_trace(create_sphere, ro, rd, iso, origin, radius)
+    truncation_dist = 1.0
+
+    fn = lambda iso: lambda origin, radius: sphere_trace(
+        create_sphere, ro, rd, iso, truncation_dist, origin, radius
+    )
 
     # will re-jit, but that's because of the nested call
     # in general, won't re-jit on different isosurface values

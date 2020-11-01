@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import functools
+from collections import namedtuple
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 from jax.ops import index_update, index_add, index
+from jax.tree_util import register_pytree_node
 
 from util import map_batched_rng
 from .root_finding import sphere_trace
@@ -84,14 +86,14 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, addi
     #    to it
     xs = sampler.sample(rng, num_samples)
 
-    intensity = lambda pt: appearance(pt, rd)
+    intensity = lambda pt: appearance(pt, rd, params.appearance)
     depth = lambda pt: jnp.linalg.norm(pt - ro, ord=2, axis=-1, keepdims=True)
     attribs = (intensity, depth)
-    intersect = lambda iso: sphere_trace(sdf, ro, rd, iso, params)
+    intersect = lambda iso: sphere_trace(sdf, ro, rd, iso, params.geometry)
 
     # mask out the isosurfaces that don't intersect with the ray
     pts = vmap(intersect)(xs)
-    error = vmap(lambda pt, x: jnp.abs(sdf(pt, params) - x))(pts, xs)
+    error = vmap(lambda pt, x: jnp.abs(sdf(pt, params.geometry) - x))(pts, xs)
     valid_mask = error < 1e-2
     num_valid_samples = valid_mask.sum()
 
@@ -161,3 +163,8 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
     )
 
     return (rgb.reshape(*ro.shape[:2], -1), depth.reshape(*ro.shape[:2], -1)), rng
+
+SDRFParams = namedtuple("SDRFParams", ["geometry", "appearance"])
+register_pytree_node(
+    SDRFParams, lambda xs: (tuple(xs), None), lambda _, xs: SDRFParams(*xs)
+)

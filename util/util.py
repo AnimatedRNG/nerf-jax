@@ -60,11 +60,12 @@ def map_batched(tensor, f, chunksize, use_vmap):
 def map_batched_rng(tensor, f, chunksize, use_vmap, rng):
     if tensor.shape[0] < chunksize:
         if use_vmap:
-            key, *subkey = jax.random.split(rng, tensor.shape[0] + 1)
-            return vmap(f)((tensor, subkey)), key
+            rngs = jax.random.split(rng, tensor.shape[0] + 1)
+            rng, subrng = rngs[0], rngs[1:]
+            return vmap(f)((tensor, subrng)), rng
         else:
-            key, subkey = jax.random.split(rng)
-            return f((tensor, subkey)), key
+            rng, subrng = jax.random.split(rng)
+            return f((tensor, subrng)), rng
     else:
         tensor_diff = -tensor.shape[0] % chunksize
         initial_len = tensor.shape[0]
@@ -74,7 +75,8 @@ def map_batched_rng(tensor, f, chunksize, use_vmap, rng):
         tensor = tensor.reshape(tensor_len // chunksize, chunksize, *tensor.shape[1:])
 
         if use_vmap:
-            rng, subrng = jax.random.split(rng)
+            rngs = jax.random.split(rng, tensor.shape[0] * tensor.shape[1] + 1)
+            rng, subrng = rngs[0], rngs[1:]
             subrng = jax.random.split(rng, tensor.shape[0] * tensor.shape[1]).reshape(
                 *tensor.shape[:2], 2
             )

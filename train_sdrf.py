@@ -150,10 +150,21 @@ def train_sdrf(config):
             manifold_loss(sdrf.geometry, manifold_samples, sdrf_params.geometry),
         )
 
-        return rgb_loss + e_loss + m_loss
+        return rgb_loss, (rgb_loss, e_loss, m_loss)
 
-    rng, *subrng = jax.random.split(rng, 5)
-    print(jit(loss_fn)(subrng, sdrf_params, train_image_seq[0], 0))
+    value_and_grad_fn = jit(value_and_grad)(loss_fn, argnums=(1,), has_aux=True)
+
+    for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
+        rng, *subrng = jax.random.split(rng, 5)
+        sdrf_params = get_params(optimizer_state)
+
+        (loss, losses), sdrf_params = value_and_grad_fn(
+            subrng, sdrf_params, train_image_seq[i], i
+        )
+
+        optimizer_state = update(i, sdrf_params, optimizer_state)
+
+        print(loss)
 
 
 def main():

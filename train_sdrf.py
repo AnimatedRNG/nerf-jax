@@ -30,7 +30,7 @@ from sdrf import (
     manifold_loss,
 )
 
-Losses = namedtuple("Losses", ["rgb_loss", "eikonal_loss", "inter_loss"])
+Losses = namedtuple("Losses", ["rgb_loss", "eikonal_loss", "manifold_loss"])
 register_pytree_node(Losses, lambda xs: (tuple(xs), None), lambda _, xs: Losses(*xs))
 
 
@@ -148,13 +148,39 @@ def train_sdrf(config):
             manifold_loss(sdrf.geometry, manifold_samples, params.geometry),
         )
 
-        losses = jnp.array([rgb_loss, e_loss, m_loss])
+        losses = Losses(rgb_loss=rgb_loss, eikonal_loss=e_loss, manifold_loss=m_loss)
 
         loss_weights = jnp.array([3e3, 5e1, 1e2])
 
-        return jnp.dot(losses, loss_weights), losses
+        return jnp.dot(jnp.array([rgb_loss, e_loss, m_loss]), loss_weights), losses
+
+    @jit
+    def validation(subrng, params, image_id, iteration):
+        H, W, focal = (
+            intrinsics["val"].height,
+            intrinsics["val"].width,
+            intrinsics["val"].focal_length,
+        )
+
+        ray_origins, ray_directions = get_ray_bundle(
+            H, W, focal, poses["val"][0][:3, :4].astype(np.float32),
+        )
+
+        rgb, depth = run_one_iter_of_sdrf(
+            sdrf,
+            params,
+            ray_origins.reshape(-1, 3),
+            ray_directions.reshape(-1, 3),
+            iteration,
+            config.sdrf,
+            subrng[3],
+        )
+
+        return rgb.reshape(H, W, 3), depth.reshape(H, W, 1)
 
     value_and_grad_fn = jit(value_and_grad(loss_fn, argnums=(1,), has_aux=True))
+
+    height, width = intrinsics["val"].height, intrinsics["val"].width
 
     for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
         rng, *subrng = jax.random.split(rng, 5)
@@ -166,7 +192,29 @@ def train_sdrf(config):
 
         optimizer_state = update(i, params, optimizer_state)
 
-        print(loss, losses)
+        if (
+            i % config.experiment.print_every == 0
+            or i == config.experiment.train_iters - 1
+        ):
+            tqdm.write(f"Iter {i}: Loss {loss}")
+
+        writer.add_scalar("train/loss", loss, i)
+        writer.add_scalar("train/rgb_loss", losses.rgb_loss, i)
+        writer.add_scalar("train/eikonal_loss", losses.eikonal_loss, i)
+        writer.add_scalar("train/manifold_loss", losses.manifold_loss, i)
+
+        if i % config.experiment.validate_every == 0:
+            start = time.time()
+            rgb, depth = validation(subrng, params, train_image_seq[i], i)
+            end = time.time()
+
+            to_img = lambda x: np.array(
+                np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255
+            ).astype(np.uint8)
+
+            writer.add_image("validation/rgb", to_img(rgb), i)
+            writer.add_image("validation/depth", to_img(depth), i)
+            print(f"Time to render {width}x{height} image: {(end - start)}")
 
 
 def main():

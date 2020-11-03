@@ -89,10 +89,7 @@ def train_sdrf(config):
     num_decay_steps = config.sdrf.model.optimizer.lr_decay * 1000
     init_adam, update, get_params = adam(
         lambda iteration: config.sdrf.model.optimizer.initial_lr
-        * (
-            config.sdrf.model.optimizer.lr_decay_factor
-            ** (iteration / num_decay_steps)
-        )
+        * (config.sdrf.model.optimizer.lr_decay_factor ** (iteration / num_decay_steps))
     )
     optimizer_state = init_adam(sdrf_params)
 
@@ -147,8 +144,8 @@ def train_sdrf(config):
         rgb_loss = jnp.mean(((target_s[..., :3] - rgb) ** 2.0).flatten())
 
         e_loss, m_loss = (
-            eikonal_loss(sdrf.geometry, eikonal_samples, sdrf_params.geometry),
-            manifold_loss(sdrf.geometry, manifold_samples, sdrf_params.geometry),
+            eikonal_loss(sdrf.geometry, eikonal_samples, params.geometry),
+            manifold_loss(sdrf.geometry, manifold_samples, params.geometry),
         )
 
         losses = jnp.array([rgb_loss, e_loss, m_loss])
@@ -157,22 +154,19 @@ def train_sdrf(config):
 
         return jnp.dot(losses, loss_weights), losses
 
-    value_and_grad_fn = lambda subrng, sdrf_params, train_image_seq, i: jit(
-        value_and_grad(loss_fn, argnums=(1,), has_aux=True)
-    )(subrng, sdrf_params, train_image_seq, i)
+    value_and_grad_fn = jit(value_and_grad(loss_fn, argnums=(1,), has_aux=True))
 
     for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
         rng, *subrng = jax.random.split(rng, 5)
         params = get_params(optimizer_state)
 
-        (loss, losses), params = value_and_grad_fn(
+        (loss, losses), (params,) = value_and_grad_fn(
             subrng, params, train_image_seq[i], i
         )
-        params = params[0]
 
         optimizer_state = update(i, params, optimizer_state)
 
-        print(losses)
+        print(loss, losses)
 
 
 def main():

@@ -13,7 +13,7 @@ import jax
 from jax import jit, vmap, pmap, grad, value_and_grad
 import jax.numpy as jnp
 from jax.tree_util import register_pytree_node
-from jax.experimental.optimizers import adam
+from jax.experimental.optimizers import adam, clip_grads
 import haiku as hk
 
 from tensorboardX import SummaryWriter
@@ -179,6 +179,7 @@ def train_sdrf(config):
         return rgb.reshape(H, W, 3), depth.reshape(H, W, 1)
 
     value_and_grad_fn = jit(value_and_grad(loss_fn, argnums=(1,), has_aux=True))
+    sdf_jit_fn = jit(lambda pts, ps: vmap(lambda pt: sdrf.geometry(pt, ps))(pts))
 
     height, width = intrinsics["val"].height, intrinsics["val"].width
 
@@ -186,11 +187,12 @@ def train_sdrf(config):
         rng, *subrng = jax.random.split(rng, 5)
         params = get_params(optimizer_state)
 
-        (loss, losses), (params,) = value_and_grad_fn(
+        (loss, losses), (grads,) = value_and_grad_fn(
             subrng, params, train_image_seq[i], i
         )
+        grads = clip_grads(grads, 1.0)
 
-        optimizer_state = update(i, params, optimizer_state)
+        optimizer_state = update(i, grads, optimizer_state)
 
         if (
             i % config.experiment.print_every == 0
@@ -205,8 +207,21 @@ def train_sdrf(config):
 
         if i % config.experiment.validate_every == 0:
             start = time.time()
-            rgb, depth = validation(subrng, params, train_image_seq[i], i)
+            rgb, depth = validation(subrng, params, 0, i)
             end = time.time()
+
+            pts = jnp.stack(
+                jnp.meshgrid(
+                    jnp.linspace(-2.0, 2.0, 64),
+                    jnp.linspace(-2.0, 2.0, 64),
+                    jnp.linspace(-2.0, 2.0, 64),
+                ),
+                axis=-1,
+            )
+            grid = pts[:, :, 32, :].reshape(64, 64, 3)
+            dists = sdf_jit_fn(grid.reshape(-1, 3), params.geometry).reshape(64, 64, 1)
+            dists_min, dists_max = dists.flatten().min(), dists.flatten().max()
+            dists_span = dists_max - dists_min
 
             to_img = lambda x: np.array(
                 np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255
@@ -214,6 +229,9 @@ def train_sdrf(config):
 
             writer.add_image("validation/rgb", to_img(rgb), i)
             writer.add_image("validation/depth", to_img(depth), i)
+            writer.add_image(
+                "validation/dists", to_img(dists + 2.0), i
+            )
             print(f"Time to render {width}x{height} image: {(end - start)}")
 
 

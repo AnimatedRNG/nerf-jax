@@ -12,7 +12,7 @@ dataset:
     downscale: 2
     white_background: False
   sampler:
-    num_random_rays: 1024
+    num_random_rays: 4096
   projection:
     no_ndc: True
     near: 2
@@ -58,11 +58,11 @@ nerf:
     lindisp: False
 sdrf:
   eikonal:
-    scale: 1.0
-    num_samples: 4096
+    scale: 4.0
+    num_samples: 32768
   manifold:
-    scale: 1.0
-    num_samples: 4096
+    scale: 4.0
+    num_samples: 32768
   sampler:
     kind: "gaussian"
     linear:
@@ -82,16 +82,16 @@ sdrf:
     chunksize: 16192
   model:
     geometry:
-      num_layers: 4
-      hidden_size: 32
+      num_layers: 2
+      hidden_size: 128
       outermost_linear: False
       activation: relu
     appearance:
-      num_layers: 4
-      hidden_size: 32
+      num_layers: 2
+      hidden_size: 128
       outermost_linear: False
       activation: relu
     optimizer:
-      initial_lr: 5.0E-3
+      initial_lr: 1.0E-4
       lr_decay: 250
       lr_decay_factor: 0.1

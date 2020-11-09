@@ -80,6 +80,7 @@ sdrf:
     truncation_distance: 1.0
     additive: True
     chunksize: 16192
+    debug: False
   model:
     geometry:
       num_layers: 2

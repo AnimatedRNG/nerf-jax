@@ -74,8 +74,17 @@ class StratifiedSampler(object):
         return 1.0 / (self.support * 2)
 
 
-def additive_integrator(samples, valid_mask):
-    return jnp.sum(samples, axis=-2) / (valid_mask.sum() + 1e-9)
+def additive_integrator(samples, valid_mask, normalize):
+    if normalize:
+        integrated = jnp.sum(samples, axis=-2) / (valid_mask.sum() + 1e-9)
+    else:
+        integrated = jnp.sum(attrib, axis=-2)
+
+    num_valid_samples = valid_mask.sum()
+
+    return jax.lax.select(
+        num_valid_samples != 0, integrated, jnp.zeros(samples.shape[-1]),
+    )
 
 
 # def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, additive):
@@ -101,12 +110,8 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     num_valid_samples = valid_mask.sum()
 
     if options.additive:
-        return tuple(
-            jax.lax.select(
-                num_valid_samples != 0,
-                additive_integrator(attrib, valid_mask),
-                jnp.zeros(attrib.shape[-1]),
-            )
+        all_iso = tuple(
+            attrib
             for attrib in vmap(
                 lambda x, pt, valid: tuple(
                     # should we just use x here rather than resampling?
@@ -117,7 +122,6 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
         )
     else:
         depths = vmap(depth)(pts)
-        # depths = index_update(depths, valid_mask, -1.0)
         depths = vmap(
             lambda depth, valid: jax.lax.select(valid, depth, -jnp.ones_like(depth))
         )(depths, valid_mask)
@@ -134,20 +138,19 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
         os = vmap(lambda x, h, valid: valid * phi(x) * h)(sorted_xs, hs, sorted_valids)
         os = jnp.cumsum(os, axis=0)
 
-        vs = vmap(
+        all_iso = vmap(
             lambda x, h, pt, o, valid: tuple(
                 valid * phi(x) * attrib(pt) * jnp.exp(-o) * h for attrib in attribs
             )
         )(sorted_xs, hs, sorted_pts, os, sorted_valids)
 
-        return tuple(
-            jax.lax.select(
-                num_valid_samples != 0,
-                jnp.sum(attrib, axis=-2),
-                jnp.zeros(attrib.shape[-1]),
-            )
-            for attrib in vs
-        )
+    return tuple(
+        additive_integrator(attrib, valid_mask, options.additive) for attrib in all_iso
+    ) + (
+        (vmap(lambda pt: jnp.abs(sdf(pt, params.geometry)))(pts),)
+        if options.debug
+        else tuple()
+    )
 
 
 def render_img(render_fn, rng, ray_bundle, chunksize):
@@ -155,7 +158,7 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
     ro_flat, rd_flat = ro.reshape(-1, *ro.shape[2:]), rd.reshape(-1, *rd.shape[2:])
     bundle = jnp.stack((ro_flat, rd_flat), axis=-1)
 
-    (rgb, depth), rng = map_batched_rng(
+    attribs, rng = map_batched_rng(
         bundle,
         lambda chunk_rng: render_fn(
             chunk_rng[0][:, 0], chunk_rng[0][:, 1], chunk_rng[1]
@@ -165,7 +168,8 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
         rng,
     )
 
-    return (rgb.reshape(*ro.shape[:2], -1), depth.reshape(*ro.shape[:2], -1)), rng
+    # return (rgb.reshape(*ro.shape[:2], -1), depth.reshape(*ro.shape[:2], -1)), rng
+    return tuple(attrib.reshape(*ro.shape[:2], -1) for attrib in attribs), rng
 
 
 SDRFParams = namedtuple("SDRFParams", ["geometry", "appearance"])

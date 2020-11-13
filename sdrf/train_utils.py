@@ -70,7 +70,7 @@ def run_one_iter_of_sdrf(
         options.render,
     )
 
-    (rgb, depth), rng = map_batched_rng(
+    outputs, rng = map_batched_rng(
         jnp.stack((ro, rd), axis=-1),
         lambda chunk_rng: render_fn(
             chunk_rng[0][:, 0], chunk_rng[0][:, 1], chunk_rng[1]
@@ -80,4 +80,4 @@ def run_one_iter_of_sdrf(
         rng,
     )
 
-    return (rgb, depth)
+    return outputs

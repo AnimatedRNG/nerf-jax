@@ -78,7 +78,7 @@ def additive_integrator(samples, valid_mask, normalize):
     if normalize:
         integrated = jnp.sum(samples, axis=-2) / (valid_mask.sum() + 1e-9)
     else:
-        integrated = jnp.sum(attrib, axis=-2)
+        integrated = jnp.sum(samples, axis=-2)
 
     num_valid_samples = valid_mask.sum()
 
@@ -97,7 +97,9 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     xs = sampler.sample(rng, options.num_samples)
 
     intensity = lambda pt: appearance(pt, rd, params.appearance)
-    depth = lambda pt: jnp.linalg.norm(pt - ro, ord=2, axis=-1, keepdims=True)
+    depth = lambda pt: jnp.clip(
+        jnp.linalg.norm(pt - ro, ord=2, axis=-1, keepdims=True), a_min=1e-9
+    )
     attribs = (intensity, depth)
     intersect = lambda iso: sphere_trace(
         sdf, ro, rd, iso, options.truncation_distance, params.geometry
@@ -124,17 +126,19 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
         depths = vmap(depth)(pts)
         depths = vmap(
             lambda depth, valid: jax.lax.select(valid, depth, -jnp.ones_like(depth))
-        )(depths, valid_mask)
+        )(depths, jnp.reshape(valid_mask, depths.shape))
         inds = jnp.argsort(depths, axis=-2)
 
         sorted_xs = jnp.take_along_axis(xs, inds[:, 0], axis=0)
-        sorted_valids = jnp.take_along_axis(valid_mask, inds, axis=0)
+        sorted_valids = jnp.take_along_axis(valid_mask, inds[:, 0], axis=0)
         sorted_depths = jnp.take_along_axis(depths, inds, axis=-2)
         sorted_pts = jnp.take_along_axis(pts, inds, axis=-2)
+
         hs = -sorted_depths
         hs = index_add(hs, index[:-1], sorted_depths[1:])
         hs = index_update(hs, index[-1], hs[-2])
-        # hs = jnp.ones(options.num_samples) * (1.0 / num_valid_samples)
+        #hs = jnp.ones(options.num_samples) * (1.0 / num_valid_samples)
+
         os = vmap(lambda x, h, valid: valid * phi(x) * h)(sorted_xs, hs, sorted_valids)
         os = jnp.cumsum(os, axis=0)
 

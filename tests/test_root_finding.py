@@ -72,3 +72,27 @@ def test_sphere_trace_iso():
     # in general, won't re-jit on different isosurface values
     for i in range(5):
         perform_radius_test(fn(i / 5.0), 2.0, 3.0)
+
+
+def test_depth_accumulation():
+    ro = jnp.array([-4.0, 0.0, -1.0])
+    rd = jnp.array([1.0, 0.0, 0.0])
+
+    truncation_dist = 100.0
+
+    def inner(origin, radius):
+        num_iters = 8
+
+        xs = jnp.linspace(-1e-2, 1e-2, num_iters)
+        pts = vmap(
+            lambda iso: sphere_trace(
+                create_sphere, ro, rd, iso, truncation_dist, origin, radius,
+            )
+        )(xs)
+        valid = vmap(lambda pt: jnp.abs(create_sphere(pt, origin, radius)) < 1e-2)(pts)
+        num_valid = jnp.sum(valid)
+        return jnp.sum(
+            vmap(lambda pt, valid: valid * pt)(pts, valid), axis=0
+        ) / jnp.clip(num_valid, 1)
+
+    perform_radius_test(inner, 2.0, 3.0)

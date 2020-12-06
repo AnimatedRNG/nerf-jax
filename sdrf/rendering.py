@@ -74,19 +74,6 @@ class StratifiedSampler(object):
         return 1.0 / (self.support * 2)
 
 
-def additive_integrator(samples, valid_mask, normalization):
-    if normalization is not None:
-        integrated = jnp.sum(samples, axis=-2) / (normalization + 1e-9)
-    else:
-        integrated = jnp.sum(samples, axis=-2)
-
-    num_valid_samples = valid_mask.sum()
-
-    return jax.lax.select(
-        num_valid_samples != 0, integrated, jnp.zeros(samples.shape[-1]),
-    )
-
-
 def find_intersections(sampler, sdf, ro, rd, params, rng, options):
     xs = sampler.sample(rng, options.num_samples)
     intersect = lambda iso: sphere_trace_depth(
@@ -142,8 +129,7 @@ def integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options):
     # [rgb, depth, etc].
     vs = vmap(
         lambda x, h, depth, o, valid: tuple(
-            valid * phi(x) * attrib(depth) * jnp.exp(-o) * h
-            for attrib in attribs
+            valid * phi(x) * attrib(depth) * jnp.exp(-o) * h for attrib in attribs
         )
     )(sorted_xs[:-1], hs, sorted_depths[:-1], os, valid_steps)
     rendered_attribs = tuple(jnp.sum(attrib, axis=0) for attrib in vs)
@@ -171,6 +157,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
         integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options)
         + debug_attribs
     )
+
 
 def render_img(render_fn, rng, ray_bundle, chunksize):
     ro, rd = ray_bundle

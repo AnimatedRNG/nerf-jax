@@ -11,7 +11,7 @@ from jax.ops import index_update, index_add, index
 from jax.tree_util import register_pytree_node
 
 from util import map_batched_rng
-from .root_finding import sphere_trace
+from .root_finding import sphere_trace, sphere_trace_depth
 
 
 def gaussian_pdf(x, mu, sigma):
@@ -87,8 +87,94 @@ def additive_integrator(samples, valid_mask, normalization):
     )
 
 
-# def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, additive):
+def find_intersections(sampler, sdf, ro, rd, params, rng, options):
+    xs = sampler.sample(rng, options.num_samples)
+    intersect = lambda iso: sphere_trace_depth(
+        sdf, ro, rd, iso, options.truncation_distance, params.geometry
+    )
+
+    depths = vmap(intersect)(xs)
+    depths = jnp.reshape(depths, (-1, 1))
+
+    return xs, depths
+
+
+def integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options):
+    # Convert the ray depths from earlier into points
+    pts = vmap(lambda depth: ro + rd * depth)(depths)
+
+    # Mask that determines if a given sphere tracing attempt had
+    # suceeded or failed
+    error = vmap(lambda pt, x: jnp.abs(sdf(pt, params.geometry) - x))(pts, xs)
+    valid_mask = error < 1e-2
+    valid_mask = jnp.reshape(valid_mask, (-1, 1))
+
+    # Now sort the depths along the ray. The invalid samples are included
+    # here, but we can remove them using the valid mask. Also, they'll
+    # probably be large given that the root finding didn't converge.
+    inds = jnp.argsort(depths, axis=0)
+
+    # Re-order all of the inputs to this function based on depth
+    sorted_xs = jnp.take_along_axis(xs, inds[:, 0], axis=0)
+    sorted_valids = jnp.take_along_axis(valid_mask, inds, axis=0)
+    sorted_depths = jnp.take_along_axis(depths, inds, axis=0)
+    sorted_pts = jnp.take_along_axis(pts, inds, axis=0)
+
+    # Next, we compute the step size from these depths --
+    # h_i = depths_{i + 1} - depths{i}
+    # We can do this in-place with the index_add op
+    hs = -sorted_depths
+    hs = index_add(hs, index[:-1], sorted_depths[1:])
+    hs = hs[:-1]
+
+    # A step should be marked as invalid if either endpoint of that segment
+    # is invalid
+    valid_steps = jnp.logical_and(sorted_valids[:-1], sorted_valids[1:])
+
+    # Now we compute the inner integral, masking out any segments that are
+    # invalid. `os` is like an opacity function -- it is like (1 - Transmittance)
+    # at any point on the ray. One thing that's awesome is that we don't need
+    # to differentiate through `phi(x)`
+    os = vmap(lambda x, h, valid: valid * phi(x) * h)(sorted_xs[:-1], hs, valid_steps)
+    os = jnp.cumsum(os, axis=0)
+
+    # Finally we compute the rendering integral. `attrib` is usually
+    # [rgb, depth, etc].
+    vs = vmap(
+        lambda x, h, depth, o, valid: tuple(
+            valid * phi(x) * attrib(depth) * jnp.exp(-o) * h
+            for attrib in attribs
+        )
+    )(sorted_xs[:-1], hs, sorted_depths[:-1], os, valid_steps)
+    rendered_attribs = tuple(jnp.sum(attrib, axis=0) for attrib in vs)
+
+    return rendered_attribs
+
+
 def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
+    xs, depths = find_intersections(sampler, sdf, ro, rd, params, rng, options)
+
+    intensity = lambda depth: appearance(ro + rd * depth, rd, params.appearance)
+    depth = lambda depth: depth
+
+    attribs = (intensity, depth)
+
+    # fetch the sdf values if requested
+    pts = vmap(lambda depth: ro + rd * depth)(depths)
+    debug_attribs = (
+        (vmap(lambda pt: jnp.abs(sdf(pt, params.geometry)))(pts),)
+        if options.debug
+        else tuple()
+    )
+
+    return (
+        integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options)
+        + debug_attribs
+    )
+
+
+# def render(sampler, sdf, appearance, ro, rd, params, rng, phi, num_samples, additive):
+def legacy_render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     # 1) \phi(d) is sdf-to-density function (almost certainly a Gaussian)
     # 2) We would want to compute the expectation of \phi(d) on a uniform
     #    distribution with many samples. This is slow, so instead we

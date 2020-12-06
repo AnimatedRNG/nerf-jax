@@ -74,9 +74,9 @@ class StratifiedSampler(object):
         return 1.0 / (self.support * 2)
 
 
-def additive_integrator(samples, valid_mask, normalize):
-    if normalize:
-        integrated = jnp.sum(samples, axis=-2) / (valid_mask.sum() + 1e-9)
+def additive_integrator(samples, valid_mask, normalization):
+    if normalization is not None:
+        integrated = jnp.sum(samples, axis=-2) / (normalization + 1e-9)
     else:
         integrated = jnp.sum(samples, axis=-2)
 
@@ -100,7 +100,9 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     depth = lambda pt: jnp.clip(
         jnp.linalg.norm(pt - ro, ord=2, axis=-1, keepdims=True), a_min=1e-9
     )
-    attribs = (intensity, depth)
+    normalization = lambda _: 1.0
+
+    attribs = (intensity, depth, normalization)
     intersect = lambda iso: sphere_trace(
         sdf, ro, rd, iso, options.truncation_distance, params.geometry
     )
@@ -122,6 +124,9 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
                 )
             )(xs, pts, valid_mask)
         )
+
+        normalization = jnp.sum(all_iso[-1], axis=0)
+        all_iso = all_iso[:-1]
     else:
         depths = vmap(depth)(pts)
         depths = vmap(
@@ -137,23 +142,32 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
         hs = -sorted_depths
         hs = index_add(hs, index[:-1], sorted_depths[1:])
         hs = index_update(hs, index[-1], hs[-2])
-        #hs = jnp.ones(options.num_samples) * (1.0 / num_valid_samples)
+        hs = jax.lax.stop_gradient(hs)
+        # hs = jnp.ones(options.num_samples) * (1.0 / num_valid_samples)
 
         os = vmap(lambda x, h, valid: valid * phi(x) * h)(sorted_xs, hs, sorted_valids)
         os = jnp.cumsum(os, axis=0)
 
         all_iso = vmap(
             lambda x, h, pt, o, valid: tuple(
-                valid * phi(x) * attrib(pt) * jnp.exp(-o) * h for attrib in attribs
+                valid * phi(x) * attrib(pt) * jnp.exp(-o) * h for attrib in attribs[:-1]
             )
         )(sorted_xs, hs, sorted_pts, os, sorted_valids)
 
-    return tuple(
-        additive_integrator(attrib, valid_mask, options.additive) for attrib in all_iso
-    ) + (
+    debug_attribs = (
         (vmap(lambda pt: jnp.abs(sdf(pt, params.geometry)))(pts),)
         if options.debug
         else tuple()
+    )
+
+    return (
+        tuple(
+            additive_integrator(
+                attrib, valid_mask, normalization if options.additive else None
+            )
+            for attrib in all_iso
+        )
+        + debug_attribs
     )
 
 

@@ -148,7 +148,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     # fetch the sdf values if requested
     pts = vmap(lambda depth: ro + rd * depth)(depths)
     debug_attribs = (
-        (vmap(lambda pt: jnp.abs(sdf(pt, params.geometry)))(pts),)
+        (depths,)
         if options.debug
         else tuple()
     )

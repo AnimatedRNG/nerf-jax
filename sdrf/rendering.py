@@ -6,7 +6,7 @@ from collections import namedtuple
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit, vmap, grad, vmap
+from jax import jit, vmap, grad
 from jax.ops import index_update, index_add, index
 from jax.tree_util import register_pytree_node
 
@@ -192,51 +192,96 @@ def integrate_rev(sdf, res, rendered_attrib_g):
     sorted_pts = vmap(lambda sorted_depth: ro + rd * sorted_depth)(sorted_depths)
 
     grad_sorted_depths = jnp.zeros_like(sorted_depths)
-    grad_sorted_attribs = jnp.zeros_like(sorted_attribs)
+    grad_sorted_attribs = tuple(
+        jnp.zeros_like(sorted_attrib) for sorted_attrib in sorted_attribs
+    )
     grad_phi_x = jnp.zeros_like(sorted_phi_x)
 
     exp_os = vmap(lambda o: jnp.exp(-1 * o))(os)
 
-    # TODO: rewrite the vjps in vmap or something?
-    # compute incoming vjp
-    dvsddepth_i = rendered_attrib_g[:-1].T @ (
-        -1 * sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * exp_os
-    )
-    dvsddepth_i1 = rendered_attrib_g[:-1].T @ (
-        sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * exp_os
+    tuple_diff_vjp = lambda inners, adjoints: (
+        vmap(lambda inner: adjoint[:-1].T @ inner)(inners) for adjoint in adjoints
     )
 
-    dvsdattr = rendered_attrib_g[:-1].T @ (
-        sorted_phi_x[:-1] * valid_steps * hs * exp_os
+    # TODO: parameterize over sorted_attribs
+    dvsddepth_i = tuple_diff_vjp(
+        -1 * sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * exp_os,
+        rendered_attrib_g,
+    )
+    dvsddepth_i1 = -1 * dvsddepth_i
+
+    dvsdattr = tuple_diff_vjp(
+        sorted_phi_x[:-1] * valid_steps * hs * exp_os, rendered_attrib_g,
     )
 
-    dvsdphi_x = rendered_attrib_g[:-1].T @ (
-        sorted_attribs[:-1] * valid_steps * hs * exp_os
+    dvsdphi = tuple_diff_vjp(
+        sorted_attribs[:-1] * valid_steps * hs * exp_os, rendered_attrib_g
     )
 
-    dvsdos = rendered_attrib_g[:-1].T @ (
-        -1 * sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * hs * exp_os
-    )
+    # dvsdos = diff_vjp(
+    #    -1 * sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * hs * exp_os,
+    #    rendered_attrib_g,
+    # )
+    dvsdos = -vs
 
     # gradient updates for dvs/ddepth_i
     # index_add(grad_sorted_depths, index[:-1], dvsddepth_i)
-    index_add(grad_sorted_depths, index[0], dvsddepth_i)
+    grad_sorted_depths = sum(
+        index_add(grad_sorted_depths, index[0], dvsddepth_ia)
+        for dvsddepth_ia in dvsddepth_i
+    )
 
     # gradient updates for dvs/ddepth_i1
     # index_add(grad_sorted_depths, index[1:], dvsddepth_i1)
-    index_add(grad_sorted_depths, index[-1], dvsddepth_i1)
+    grad_sorted_depths = sum(
+        index_add(grad_sorted_depths, index[-1], dvsddepth_i1a)
+        for dvsddepth_i1a in dvsddepth_i1
+    )
 
     # gradient updates for dvs/dsorted_attribs
-    index_add(grad_sorted_attribs, index[:-1], dvsdattr)
+    grad_sorted_attribs = sum(
+        index_add(grad_sorted_attribs, index[:-1], dvsdattr_a)
+        for dvsdattr_a in dvsdattr
+    )
 
     # gradient update for dvs/dphi_x
-    index_add(grad_phi_x, index[:-1], dvsdphi_x)
+    grad_phi_x = sum(
+        index_add(grad_phi_x, index[:-1], dvsdphi_xa) for dvsdphi_xa in dvsdphi_x
+    )
 
-    # do reverse cumsum for incoming_adjoint_os
+    # now let's consider the derivatives of os
+    # do reverse cumsum for incoming_adjoints_os
+    incoming_adjoints_os = tuple(
+        jnp.cumsum(dvsdos_a[::-1], axis=0)[::-1] for dvsdos_a in dvsdos
+    )
 
     # then compute dos/ddepth_i and dos/ddepth_i1
+    dosdepth_i = tuple(
+        vmap(lambda inner, v: v.T @ inner)(
+            -1.0 * sorted_phi_x * valid_steps, incoming_adjoints_os_a
+        )
+        for incoming_adjoints_os_a in incoming_adjoints_os
+    )
+    dosdepth_i1 = -dosdepth_i
 
     # then compute dos/dphi
+    dosdphi = tuple(
+        vmap(lambda inner, v: v.T @ inner)(-1.0 * hs, incoming_adjoints_os)
+        for incoming_adjoints_os_a in incoming_adjoints_os
+    )
+
+    # now add the contributions for os
+    grad_sorted_depths = sum(
+        index_add(grad_sorted_depths, index[0], dosddepth_i)
+        for dosddepth_ia in dosddepth_i
+    )
+    grad_sorted_depths = sum(
+        index_add(grad_sorted_depths, index[-1], dosddepth_i1)
+        for dosddepth_i1a in dosddepth_i1
+    )
+    grad_phi_x = sum(
+        index_add(grad_phi_x, index[:-1], dosdphi) for dosdphi_a in dosdphi
+    )
 
     # unsort
     grad_depths = jnp.take_along_axis(grad_sorted_depths, inds, axis=0)
@@ -255,12 +300,11 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     depth = lambda depth: depth
 
     phi_x = vmap(lambda pt: phi(sdf(pt, params.geometry)))(pts)
+    phi_x = phi_x.reshape(-1, 1)
 
-    # TODO: change this so that we actually evaluate intensity and depth here
     attribs = (vmap(intensity)(pts), vmap(depth)(depths))
 
     # fetch the sdf values if requested
-    pts = vmap(lambda depth: ro + rd * depth)(depths)
     debug_attribs = (depths,) if options.debug else tuple()
 
     return (

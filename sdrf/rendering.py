@@ -6,7 +6,7 @@ from collections import namedtuple
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit, vmap
+from jax import jit, vmap, grad, vmap
 from jax.ops import index_update, index_add, index
 from jax.tree_util import register_pytree_node
 
@@ -86,7 +86,12 @@ def find_intersections(sampler, sdf, ro, rd, params, rng, options):
     return xs, depths
 
 
-def integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options):
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
+def integrate(sdf, ro, rd, depths, xs, attribs, phi_x, params, options):
+    return integrate_fwd(sdf, ro, rd, depths, xs, attribs, phi_x, params, options)[0]
+
+
+def integrate_fwd(sdf, ro, rd, depths, xs, attribs, phi_x, params, options):
     # Convert the ray depths from earlier into points
     pts = vmap(lambda depth: ro + rd * depth)(depths)
 
@@ -105,6 +110,10 @@ def integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options):
     sorted_xs = jnp.take_along_axis(xs, inds[:, 0], axis=0)
     sorted_valids = jnp.take_along_axis(valid_mask, inds, axis=0)
     sorted_depths = jnp.take_along_axis(depths, inds, axis=0)
+    sorted_attribs = tuple(
+        jnp.take_along_axis(attrib, inds, axis=0) for attrib in attribs
+    )
+    sorted_phi_x = jnp.take_along_axis(phi_x, inds, axis=0)
     sorted_pts = jnp.take_along_axis(pts, inds, axis=0)
 
     # Next, we compute the step size from these depths --
@@ -120,41 +129,142 @@ def integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options):
 
     # Now we compute the inner integral, masking out any segments that are
     # invalid. `os` is like an opacity function -- it is like (1 - Transmittance)
-    # at any point on the ray. One thing that's awesome is that we don't need
-    # to differentiate through `phi(x)`
-    os = vmap(lambda x, h, valid: valid * phi(x) * h)(sorted_xs[:-1], hs, valid_steps)
+    # at any point on the ray
+    os = vmap(lambda phi_x, h, valid: valid * phi_x * h)(
+        sorted_phi_x[:-1], hs, valid_steps
+    )
     os = jnp.cumsum(os, axis=0)
 
     # Finally we compute the rendering integral. `attrib` is usually
     # [rgb, depth, etc].
-    vs = vmap(
-        lambda x, h, depth, o, valid: tuple(
-            valid * phi(x) * attrib(depth) * jnp.exp(-o) * h for attrib in attribs
+    vs = tuple(
+        vmap(
+            lambda phi_x, h, attrib, depth, o, valid: valid
+            * phi_x
+            * attrib
+            * jnp.exp(-o)
+            * h
+        )(
+            sorted_phi_x[:-1],
+            hs,
+            sorted_attrib[:-1],
+            sorted_depths[:-1],
+            os,
+            valid_steps,
         )
-    )(sorted_xs[:-1], hs, sorted_depths[:-1], os, valid_steps)
+        for sorted_attrib in sorted_attribs
+    )
     rendered_attribs = tuple(jnp.sum(attrib, axis=0) for attrib in vs)
 
-    return rendered_attribs
+    return (
+        rendered_attribs,
+        (
+            ro,
+            rd,
+            inds,
+            valid_steps,
+            sorted_depths,
+            sorted_attribs,
+            sorted_phi_x,
+            hs,
+            os,
+            vs,
+        ),
+    )
+
+
+def integrate_rev(sdf, res, rendered_attrib_g):
+    # JAX's autodiff seems to run into the NaN issue with the above code,
+    # so here we just write out the derivative by hand
+    (
+        ro,
+        rd,
+        inds,
+        valid_steps,
+        sorted_depths,
+        sorted_attribs,
+        sorted_phi_x,
+        hs,
+        os,
+        vs,
+    ) = res
+
+    sorted_pts = vmap(lambda sorted_depth: ro + rd * sorted_depth)(sorted_depths)
+
+    grad_sorted_depths = jnp.zeros_like(sorted_depths)
+    grad_sorted_attribs = jnp.zeros_like(sorted_attribs)
+    grad_phi_x = jnp.zeros_like(sorted_phi_x)
+
+    exp_os = vmap(lambda o: jnp.exp(-1 * o))(os)
+
+    # TODO: rewrite the vjps in vmap or something?
+    # compute incoming vjp
+    dvsddepth_i = rendered_attrib_g[:-1].T @ (
+        -1 * sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * exp_os
+    )
+    dvsddepth_i1 = rendered_attrib_g[:-1].T @ (
+        sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * exp_os
+    )
+
+    dvsdattr = rendered_attrib_g[:-1].T @ (
+        sorted_phi_x[:-1] * valid_steps * hs * exp_os
+    )
+
+    dvsdphi_x = rendered_attrib_g[:-1].T @ (
+        sorted_attribs[:-1] * valid_steps * hs * exp_os
+    )
+
+    dvsdos = rendered_attrib_g[:-1].T @ (
+        -1 * sorted_attribs[:-1] * sorted_phi_x[:-1] * valid_steps * hs * exp_os
+    )
+
+    # gradient updates for dvs/ddepth_i
+    # index_add(grad_sorted_depths, index[:-1], dvsddepth_i)
+    index_add(grad_sorted_depths, index[0], dvsddepth_i)
+
+    # gradient updates for dvs/ddepth_i1
+    # index_add(grad_sorted_depths, index[1:], dvsddepth_i1)
+    index_add(grad_sorted_depths, index[-1], dvsddepth_i1)
+
+    # gradient updates for dvs/dsorted_attribs
+    index_add(grad_sorted_attribs, index[:-1], dvsdattr)
+
+    # gradient update for dvs/dphi_x
+    index_add(grad_phi_x, index[:-1], dvsdphi_x)
+
+    # do reverse cumsum for incoming_adjoint_os
+
+    # then compute dos/ddepth_i and dos/ddepth_i1
+
+    # then compute dos/dphi
+
+    # unsort
+    grad_depths = jnp.take_along_axis(grad_sorted_depths, inds, axis=0)
+    grad_attribs = jnp.take_along_axis(grad_sorted_attribs, inds, axis=0)
+    grad_phi_x = jnp.take_along_axis(grad_phi_x, inds, axis=0)
+
+    return (None, None, grad_depths, None, grad_attribs, grad_phi_x, None, None)
 
 
 def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     xs, depths = find_intersections(sampler, sdf, ro, rd, params, rng, options)
 
-    intensity = lambda depth: appearance(ro + rd * depth, rd, params.appearance)
+    pts = vmap(lambda depth: ro + rd * depth)(depths)
+
+    intensity = lambda pt: appearance(pt, rd, params.appearance)
     depth = lambda depth: depth
 
-    attribs = (intensity, depth)
+    phi_x = vmap(lambda pt: phi(sdf(pt, params.geometry)))(pts)
+
+    # TODO: change this so that we actually evaluate intensity and depth here
+    attribs = (vmap(intensity)(pts), vmap(depth)(depths))
 
     # fetch the sdf values if requested
     pts = vmap(lambda depth: ro + rd * depth)(depths)
-    debug_attribs = (
-        (depths,)
-        if options.debug
-        else tuple()
-    )
+    debug_attribs = (depths,) if options.debug else tuple()
 
     return (
-        integrate(sdf, ro, rd, depths, xs, attribs, phi, params, options)
+        integrate(sdf, ro, rd, depths, xs, attribs, phi_x, params, options)
         + debug_attribs
     )
 
@@ -177,6 +287,8 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
     # return (rgb.reshape(*ro.shape[:2], -1), depth.reshape(*ro.shape[:2], -1)), rng
     return tuple(attrib.reshape(*ro.shape[:2], -1) for attrib in attribs), rng
 
+
+integrate.defvjp(integrate_fwd, integrate_rev)
 
 SDRFParams = namedtuple("SDRFParams", ["geometry", "appearance"])
 register_pytree_node(

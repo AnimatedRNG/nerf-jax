@@ -297,7 +297,6 @@ def main():
 
 
 if __name__ == "__main__":
-    import cv2
     import torch
     from reference import *
     import time

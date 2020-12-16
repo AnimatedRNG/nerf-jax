@@ -229,9 +229,7 @@ def train_sdrf(config):
 
             writer.add_image("validation/rgb", to_img(rgb), i)
             writer.add_image("validation/depth", to_img(depth), i)
-            writer.add_image(
-                "validation/dists", to_img(dists + 2.0), i
-            )
+            writer.add_image("validation/dists", to_img(dists + 2.0), i)
             print(f"Time to render {width}x{height} image: {(end - start)}")
 
 
@@ -248,7 +246,6 @@ def main():
 
 
 if __name__ == "__main__":
-    import cv2
     import time
 
     main()

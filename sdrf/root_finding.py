@@ -69,8 +69,15 @@ def sphere_trace_depth_rev_paper(sdf, res, g):
 
     u = (-1.0 / (dp @ rd.T)) * g
 
+    validity = jnp.abs(sdf(pt, *params) - iso) < 1e-3
+
     _, vjp_params = vjp(functools.partial(sdf, pt), *params)
-    return (None, None, None, None, *vjp_params(u))
+
+    # mask output by validity?
+    out_vjp_params = list(jax.lax.select(validity, vjp_param, jnp.zeros_like(vjp_param)) \
+                          for vjp_param in vjp_params(u))
+    #return (None, None, None, None, *vjp_params(u))
+    return (None, None, None, None, *out_vjp_params)
 
 
 # TODO: rephrase as a jvp at some point?

@@ -262,34 +262,33 @@ def integrate_rev(sdf, res, rendered_attrib_g):
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-def masked_sdf(sdf, valid_mask, pts, params):
-    return masked_sdf_fwd(sdf, valid_mask, pts, params)[0]
+def masked_sdf(sdf, valid, pt, params):
+    return masked_sdf_fwd(sdf, valid, pt, params)[0]
 
 
-def masked_sdf_fwd(sdf, valid_mask, pts, params):
+def masked_sdf_fwd(sdf, valid, pt, params):
     return (
-        vmap(lambda valid, pt: valid * sdf(pt, params.geometry))(valid_mask, pts),
-        (valid_mask, pts, params),
+        valid * sdf(pt, params.geometry),
+        (valid, pt, params),
     )
 
 
-def masked_sdf_rev(sdf, res, gs):
-    valid_mask, pts, params = res
+def masked_sdf_rev(sdf, res, g):
+    valid, pt, params = res
 
-    """_, vjp_p = vjp(
-        lambda pts, ps: vmap(lambda pt: sdf(pt, ps.geometry))(pts),
-        pts,
-        params,
-    )"""
-    outs_grad = vmap(
-        lambda pt, g: vjp(lambda pt, ps: sdf(pt, ps.geometry), pt, params)[1](g)
-    )(pts, gs[:, 0])
+    _, vjp_fun = vjp(lambda p, ps: sdf(p, ps.geometry), pt, params)
 
-    identity = lambda x: x
+    grads_input = vjp_fun(g)
 
-    # outs_grad = vjp_p(gs[:, 0])
+    grads_input = tuple(
+        tree_map(
+            lambda param: jax.lax.select(valid, param, jnp.zeros_like(param)),
+            grad_input,
+        )
+        for grad_input in grads_input
+    )
 
-    return (None, *outs_grad)
+    return (None, *grads_input)
 
 
 def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
@@ -306,9 +305,9 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     valid_mask = error < 1e-2
     valid_mask = jnp.reshape(valid_mask, (-1, 1))
 
-    phi_x = masked_sdf(sdf, valid_mask, pts, params)
-    # phi_x = vmap(lambda pt: phi(sdf(pt, params.geometry)))(pts)
-    # phi_x = jax.lax.select(valid_mask[:, 0], phi_x, jnp.zeros_like(phi_x))
+    phi_x = vmap(lambda pt, valid: phi(masked_sdf(sdf, valid, pt, params)))(
+        pts, valid_mask[:, 0]
+    )
     phi_x = phi_x.reshape(-1, 1)
 
     attribs = (vmap(intensity)(pts), vmap(depth)(depths))
@@ -317,8 +316,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     debug_attribs = (depths,) if options.debug else tuple()
 
     return (
-        # integrate(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options)
-        tuple(jnp.sum(attrib * phi_x, axis=0) / 8 for attrib in attribs)
+        integrate(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options)
         + debug_attribs
     )
 

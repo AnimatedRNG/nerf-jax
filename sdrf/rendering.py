@@ -6,7 +6,7 @@ from collections import namedtuple
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit, vmap, grad
+from jax import jit, vmap, grad, vjp
 from jax.ops import index_update, index_add, index
 from jax.tree_util import register_pytree_node
 
@@ -87,19 +87,15 @@ def find_intersections(sampler, sdf, ro, rd, params, rng, options):
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-def integrate(sdf, ro, rd, depths, xs, attribs, phi_x, params, options):
-    return integrate_fwd(sdf, ro, rd, depths, xs, attribs, phi_x, params, options)[0]
+def integrate(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options):
+    return integrate_fwd(
+        sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+    )[0]
 
 
-def integrate_fwd(sdf, ro, rd, depths, xs, attribs, phi_x, params, options):
+def integrate_fwd(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options):
     # Convert the ray depths from earlier into points
     pts = vmap(lambda depth: ro + rd * depth)(depths)
-
-    # Mask that determines if a given sphere tracing attempt had
-    # suceeded or failed
-    error = vmap(lambda pt, x: jnp.abs(sdf(pt, params.geometry) - x))(pts, xs)
-    valid_mask = error < 1e-2
-    valid_mask = jnp.reshape(valid_mask, (-1, 1))
 
     # Now sort the depths along the ray. The invalid samples are included
     # here, but we can remove them using the valid mask. Also, they'll
@@ -201,9 +197,9 @@ def integrate_rev(sdf, res, rendered_attrib_g):
 
     def diff_vjp(inners, adjoint):
         if isinstance(adjoint, (tuple, list)):
-            '''return vmap(
+            """return vmap(
                 lambda inner: adjoint[sorted_attrib_index].T @ inner
-            )(inners)'''
+            )(inners)"""
             return vmap(
                 lambda inner: adjoint[sorted_attrib_index].reshape(1, -1) @ inner
             )(inners)
@@ -220,25 +216,31 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         dvsdattr_shape = (hs.shape[0], sorted_attribs[sorted_attrib_index].shape[-1])
 
         dvsdattr = diff_vjp(
-            jnp.broadcast_to(sorted_phi_x[:-1] * valid_steps * hs * exp_os,
-                             dvsdattr_shape), rendered_attrib_g
+            jnp.broadcast_to(
+                sorted_phi_x[:-1] * valid_steps * hs * exp_os, dvsdattr_shape
+            ),
+            rendered_attrib_g,
         )
 
         dvsdphi = diff_vjp(
-            sorted_attribs[sorted_attrib_index][:-1] * valid_steps * hs * exp_os, rendered_attrib_g
+            sorted_attribs[sorted_attrib_index][:-1] * valid_steps * hs * exp_os,
+            rendered_attrib_g,
         )
 
         dvsdos = diff_vjp(-vs[sorted_attrib_index], rendered_attrib_g)
 
         grad_sorted_depths = index_add(grad_sorted_depths, index[0], dvsddepth_i[0])
         grad_sorted_depths = index_add(grad_sorted_depths, index[-1], dvsddepth_i1[-1])
-        grad_sorted_attribs[sorted_attrib_index] = \
-            index_add(grad_sorted_attribs[sorted_attrib_index], index[:-1], dvsdattr)
+        grad_sorted_attribs[sorted_attrib_index] = index_add(
+            grad_sorted_attribs[sorted_attrib_index], index[:-1], dvsdattr
+        )
         grad_phi_x = index_add(grad_phi_x, index[:-1], dvsdphi)
 
         incoming_adjoints_os = jnp.cumsum(dvsdos[::-1], axis=0)[::-1]
 
-        dosddepth_i = diff_vjp(-1.0 * sorted_phi_x[:-1] * valid_steps, incoming_adjoints_os)
+        dosddepth_i = diff_vjp(
+            -1.0 * sorted_phi_x[:-1] * valid_steps, incoming_adjoints_os
+        )
         dosddepth_i1 = -dosddepth_i
 
         dosdphi = diff_vjp(-1.0 * hs, incoming_adjoints_os)
@@ -250,11 +252,45 @@ def integrate_rev(sdf, res, rendered_attrib_g):
 
     # unsort
     grad_depths = jnp.take_along_axis(grad_sorted_depths, inds, axis=0)
-    grad_attribs = tuple(jnp.take_along_axis(grad_sorted_attrib, inds, axis=0) \
-                         for grad_sorted_attrib in grad_sorted_attribs)
+    grad_attribs = tuple(
+        jnp.take_along_axis(grad_sorted_attrib, inds, axis=0)
+        for grad_sorted_attrib in grad_sorted_attribs
+    )
     grad_phi_x = jnp.take_along_axis(grad_phi_x, inds, axis=0)
 
-    return (None, None, grad_depths, None, grad_attribs, grad_phi_x, None, None)
+    return (None, None, None, grad_depths, None, grad_attribs, grad_phi_x, None, None)
+
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
+def masked_sdf(sdf, valid_mask, pts, params):
+    return masked_sdf_fwd(sdf, valid_mask, pts, params)[0]
+
+
+def masked_sdf_fwd(sdf, valid_mask, pts, params):
+    return (
+        vmap(lambda valid, pt: valid * sdf(pt, params.geometry))(valid_mask, pts),
+        (valid_mask, pts, params),
+    )
+
+
+def masked_sdf_rev(sdf, res, gs):
+    valid_mask, pts, params = res
+
+    _, vjp_p = vjp(sdf, pts, params.geometry)
+
+    outs_grad = vjp_p(gs)
+
+    outs_grad = tuple(
+        tree_map(
+            lambda param: jax.lax.select(
+                valid_mask[:, 0], param, jnp.zeros_like(param)
+            ),
+            outs_grad,
+        )
+        for out_grad in outs_grad
+    )
+
+    return (None, *outs_grad)
 
 
 def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
@@ -265,7 +301,15 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     intensity = lambda pt: appearance(pt, rd, params.appearance)
     depth = lambda depth: depth
 
-    phi_x = vmap(lambda pt: phi(sdf(pt, params.geometry)))(pts)
+    # Mask that determines if a given sphere tracing attempt had
+    # suceeded or failed
+    error = vmap(lambda pt, x: jnp.abs(sdf(pt, params.geometry) - x))(pts, xs)
+    valid_mask = error < 1e-2
+    valid_mask = jnp.reshape(valid_mask, (-1, 1))
+
+    phi_x = masked_sdf(sdf, valid_mask, pts, params)
+    # phi_x = vmap(lambda pt: phi(sdf(pt, params.geometry)))(pts)
+    # phi_x = jax.lax.select(valid_mask[:, 0], phi_x, jnp.zeros_like(phi_x))
     phi_x = phi_x.reshape(-1, 1)
 
     attribs = (vmap(intensity)(pts), vmap(depth)(depths))
@@ -274,7 +318,8 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     debug_attribs = (depths,) if options.debug else tuple()
 
     return (
-        integrate(sdf, ro, rd, depths, xs, attribs, phi_x, params, options)
+        # integrate(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options)
+        tuple(jnp.sum(attrib * phi_x, axis=0) / 8 for attrib in attribs)
         + debug_attribs
     )
 
@@ -299,6 +344,7 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
 
 
 integrate.defvjp(integrate_fwd, integrate_rev)
+masked_sdf.defvjp(masked_sdf_fwd, masked_sdf_rev)
 
 SDRFParams = namedtuple("SDRFParams", ["geometry", "appearance"])
 register_pytree_node(

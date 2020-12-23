@@ -74,9 +74,14 @@ def sphere_trace_depth_rev_paper(sdf, res, g):
     _, vjp_params = vjp(functools.partial(sdf, pt), *params)
 
     # mask output by validity?
-    out_vjp_params = list(jax.lax.select(validity, vjp_param, jnp.zeros_like(vjp_param)) \
-                          for vjp_param in vjp_params(u))
-    #return (None, None, None, None, *vjp_params(u))
+    out_vjp_params = [
+        tree_map(
+            lambda param: jax.lax.select(validity, param, jnp.zeros_like(param)),
+            vjp_param,
+        )
+        for vjp_param in vjp_params(u)
+    ]
+    # return (None, None, None, None, *vjp_params(u))
     return (None, None, None, None, *out_vjp_params)
 
 

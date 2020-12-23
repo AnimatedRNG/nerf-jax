@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap, grad, vjp
 from jax.ops import index_update, index_add, index
-from jax.tree_util import register_pytree_node
+from jax.tree_util import register_pytree_node, tree_map
 
 from util import map_batched_rng
 from .root_finding import sphere_trace, sphere_trace_depth
@@ -276,19 +276,18 @@ def masked_sdf_fwd(sdf, valid_mask, pts, params):
 def masked_sdf_rev(sdf, res, gs):
     valid_mask, pts, params = res
 
-    _, vjp_p = vjp(sdf, pts, params.geometry)
+    """_, vjp_p = vjp(
+        lambda pts, ps: vmap(lambda pt: sdf(pt, ps.geometry))(pts),
+        pts,
+        params,
+    )"""
+    outs_grad = vmap(
+        lambda pt, g: vjp(lambda pt, ps: sdf(pt, ps.geometry), pt, params)[1](g)
+    )(pts, gs[:, 0])
 
-    outs_grad = vjp_p(gs)
+    identity = lambda x: x
 
-    outs_grad = tuple(
-        tree_map(
-            lambda param: jax.lax.select(
-                valid_mask[:, 0], param, jnp.zeros_like(param)
-            ),
-            outs_grad,
-        )
-        for out_grad in outs_grad
-    )
+    # outs_grad = vjp_p(gs[:, 0])
 
     return (None, *outs_grad)
 

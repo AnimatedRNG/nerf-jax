@@ -310,7 +310,27 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     )
     phi_x = phi_x.reshape(-1, 1)
 
-    attribs = (vmap(intensity)(pts), vmap(depth)(depths))
+    attribs = (
+        vmap(
+            lambda pt, valid: jax.lax.cond(
+                valid,
+                pt,
+                intensity,
+                pt,
+                lambda pt: jnp.zeros_like(intensity(pt)),
+            )
+        )(pts, valid_mask[:, 0]),
+        vmap(
+            lambda depths_i, valid: jax.lax.cond(
+                valid,
+                depths_i,
+                depth,
+                depths_i,
+                lambda depths_i: jnp.zeros_like(depth(depths_i)),
+            )
+        )(depths, valid_mask[:, 0]),
+    )
+    #attribs = (vmap(intensity)(pts), vmap(depth)(depths))
 
     # fetch the sdf values if requested
     debug_attribs = (depths,) if options.debug else tuple()

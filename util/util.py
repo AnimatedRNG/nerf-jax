@@ -1,16 +1,25 @@
 import functools
+from collections import namedtuple
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 from jax.ops import index, index_update
+from jax.tree_util import register_pytree_node
+from box import Box
 
 
 def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
     ii, jj = jnp.meshgrid(
-        jnp.arange(width, dtype=jnp.float32,),
-        jnp.arange(height, dtype=jnp.float32,),
+        jnp.arange(
+            width,
+            dtype=jnp.float32,
+        ),
+        jnp.arange(
+            height,
+            dtype=jnp.float32,
+        ),
         indexing="xy",
     )
 
@@ -120,3 +129,16 @@ def look_at(eye, center, up):
     out = index_update(out, jax.ops.index[3, 3], 1.0)
 
     return out
+
+
+def serialize_box(base_name, box):
+    box_namedtuple_cls = namedtuple(base_name, tuple(box.keys()))
+
+    child_nodes = {
+        key: serialize_box(key, value) if isinstance(value, Box) else value
+        for key, value in box.items()
+    }
+
+    box_namedtuple = box_namedtuple_cls(**child_nodes)
+
+    return box_namedtuple

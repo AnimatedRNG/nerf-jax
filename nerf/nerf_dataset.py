@@ -7,6 +7,7 @@ from io import StringIO
 import functools
 from collections import namedtuple
 
+from frozendict import frozendict
 import numpy as np
 import imageio
 import jax
@@ -93,16 +94,16 @@ def loader(data_dir, filter_chain_options, device):
         for split, mdata in metadata.items()
     }
 
-    intrinsics = {
+    intrinsics = frozendict({
         split.name: Intrinsics(
             focal_length=0.5
             * images[split.name].shape[2]
-            / jnp.tan(0.5 * float(mdata["camera_angle_x"])),
+            / np.tan(0.5 * float(mdata["camera_angle_x"])),
             width=images[split.name].shape[2],
             height=images[split.name].shape[1],
         )
         for split, mdata in metadata.items()
-    }
+    })
 
     return images, poses, intrinsics
 
@@ -155,7 +156,9 @@ if __name__ == "__main__":
     devices = jax.devices("gpu")
 
     images, poses, intrinsics = loader(
-        Path(".") / "data" / "nerf_synthetic" / "lego", example_options, devices[0],
+        Path(".") / "data" / "nerf_synthetic" / "lego",
+        example_options,
+        devices[0],
     )
 
     SamplerOptions = namedtuple("SamplerOptions", ["num_random_rays"])

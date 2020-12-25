@@ -20,7 +20,7 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
 from nerf import loader, sampler
-from util import get_ray_bundle
+from util import get_ray_bundle, serialize_box, unserialize_box
 from sdrf import (
     SDRFParams,
     SDRF,
@@ -56,8 +56,27 @@ def init_networks(config, rng):
         )(jnp.concatenate((pt, rd), axis=-1))
     )
 
-    geometry_params = geometry_fn.init(rng[0], jnp.ones([3,]))
-    appearance_params = appearance_fn.init(rng[0], jnp.ones([3,]), jnp.ones([3,]))
+    geometry_params = geometry_fn.init(
+        rng[0],
+        jnp.ones(
+            [
+                3,
+            ]
+        ),
+    )
+    appearance_params = appearance_fn.init(
+        rng[0],
+        jnp.ones(
+            [
+                3,
+            ]
+        ),
+        jnp.ones(
+            [
+                3,
+            ]
+        ),
+    )
 
     geometry_fn = hk.without_apply_rng(geometry_fn)
     appearance_fn = hk.without_apply_rng(appearance_fn)
@@ -81,7 +100,9 @@ def train_sdrf(config):
     basedir = config.dataset.basedir
     print(f"Loading images/poses from {basedir}...")
     images, poses, intrinsics = loader(
-        Path(".") / basedir, config.dataset.filter_chain, jax.devices()[0],
+        Path(".") / basedir,
+        config.dataset.filter_chain,
+        jax.devices()[0],
     )
     print("...done!")
 
@@ -108,6 +129,8 @@ def train_sdrf(config):
         maxval=images["train"].shape[0],
         dtype=jnp.uint32,
     )
+
+    config = serialize_box("SDRFConfig", config)
 
     def loss_fn(subrng, params, image_id, iteration):
         ray_origins, ray_directions, target_s = sampler(
@@ -163,7 +186,10 @@ def train_sdrf(config):
         )
 
         ray_origins, ray_directions = get_ray_bundle(
-            H, W, focal, poses["val"][0][:3, :4].astype(np.float32),
+            H,
+            W,
+            focal,
+            poses["val"][0][:3, :4].astype(np.float32),
         )
 
         rgb, depth = run_one_iter_of_sdrf(
@@ -240,7 +266,7 @@ def main():
 
     with open(config_args.config, "r") as f:
         config_dictionary = yaml.load(f, Loader=yaml.FullLoader)
-    config = Box(config_dictionary)
+    config = Box(config_dictionary, frozen_box=True, box_it_up=True)
 
     train_sdrf(config)
 

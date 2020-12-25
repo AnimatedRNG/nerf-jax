@@ -5,6 +5,7 @@ import functools
 from pathlib import Path
 from datetime import datetime
 from collections import namedtuple
+import pickle
 
 import numpy as np
 import yaml
@@ -96,6 +97,10 @@ def train_sdrf(config):
     rng, *subrng = jax.random.split(rng, 3)
 
     sdrf, sdrf_params = init_networks(config.sdrf.model, subrng)
+    with open("experiment/sphere_nerf.pkl", "rb") as pkl:
+        sdrf_params = SDRFParams(
+            geometry=pickle.load(pkl), appearance=sdrf_params.appearance
+        )
 
     basedir = config.dataset.basedir
     print(f"Loading images/poses from {basedir}...")
@@ -256,6 +261,7 @@ def train_sdrf(config):
             writer.add_image("validation/rgb", to_img(rgb), i)
             writer.add_image("validation/depth", to_img(depth), i)
             writer.add_image("validation/dists", to_img(dists + 2.0), i)
+            writer.add_image("validation/target", to_img(images["val"][0]))
             print(f"Time to render {width}x{height} image: {(end - start)}")
 
 

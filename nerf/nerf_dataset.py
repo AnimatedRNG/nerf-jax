@@ -41,7 +41,7 @@ def filter_chain(img, options):
     if options.white_background:
         img = img[..., :3] * img[..., -1:] + (1.0 - img[..., -1:])
 
-    return img
+    return img[:, :, :3]
 
 
 def loader(data_dir, filter_chain_options, device):
@@ -94,16 +94,18 @@ def loader(data_dir, filter_chain_options, device):
         for split, mdata in metadata.items()
     }
 
-    intrinsics = frozendict({
-        split.name: Intrinsics(
-            focal_length=0.5
-            * images[split.name].shape[2]
-            / np.tan(0.5 * float(mdata["camera_angle_x"])),
-            width=images[split.name].shape[2],
-            height=images[split.name].shape[1],
-        )
-        for split, mdata in metadata.items()
-    })
+    intrinsics = frozendict(
+        {
+            split.name: Intrinsics(
+                focal_length=0.5
+                * images[split.name].shape[2]
+                / np.tan(0.5 * float(mdata["camera_angle_x"])),
+                width=images[split.name].shape[2],
+                height=images[split.name].shape[1],
+            )
+            for split, mdata in metadata.items()
+        }
+    )
 
     return images, poses, intrinsics
 

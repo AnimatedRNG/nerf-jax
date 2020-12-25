@@ -20,7 +20,7 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
 from nerf import loader, sampler
-from util import get_ray_bundle, serialize_box, unserialize_box
+from util import get_ray_bundle, serialize_box
 from sdrf import (
     SDRFParams,
     SDRF,

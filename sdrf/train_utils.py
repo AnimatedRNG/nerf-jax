@@ -24,7 +24,8 @@ def eikonal_loss(sdf, pts, sdf_params):
         pt, sdf_params
     )
     return jnp.mean(
-        vmap(lambda pt: (1.0 - jnp.linalg.norm(sdf_grad(pt))) ** 2.0)(pts), axis=0,
+        vmap(lambda pt: (1.0 - jnp.linalg.norm(sdf_grad(pt))) ** 2.0)(pts),
+        axis=0,
     )
 
 
@@ -79,5 +80,6 @@ def run_one_iter_of_sdrf(
         True,
         rng,
     )
+    #outputs = vmap(lambda ro, rd: render_fn(ro, rd, rng))(ro, rd)
 
     return outputs

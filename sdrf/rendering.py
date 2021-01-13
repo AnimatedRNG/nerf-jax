@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax import jit, vmap, grad, vjp
 from jax.ops import index_update, index_add, index
 from jax.tree_util import register_pytree_node, tree_map
+from jax.experimental.host_callback import id_tap, id_print
 
 from util import map_batched_rng
 from .root_finding import sphere_trace, sphere_trace_depth
@@ -330,7 +331,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
             )
         )(depths, valid_mask[:, 0]),
     )
-    #attribs = (vmap(intensity)(pts), vmap(depth)(depths))
+    # attribs = (vmap(intensity)(pts), vmap(depth)(depths))
 
     # fetch the sdf values if requested
     debug_attribs = (depths,) if options.debug else tuple()

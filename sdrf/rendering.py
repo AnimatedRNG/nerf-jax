@@ -88,13 +88,15 @@ def find_intersections(sampler, sdf, ro, rd, params, rng, options):
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-def integrate(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options):
+def integrate(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options):
     return integrate_fwd(
-        sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+        sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
     )[0]
 
 
-def integrate_fwd(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options):
+def integrate_fwd(
+    sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+):
     # Convert the ray depths from earlier into points
     pts = vmap(lambda depth: ro + rd * depth)(depths)
 
@@ -156,6 +158,7 @@ def integrate_fwd(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, o
     return (
         rendered_attribs,
         (
+            uv,
             ro,
             rd,
             inds,
@@ -174,6 +177,7 @@ def integrate_rev(sdf, res, rendered_attrib_g):
     # JAX's autodiff seems to run into the NaN issue with the above code,
     # so here we just write out the derivative by hand
     (
+        uv,
         ro,
         rd,
         inds,
@@ -259,7 +263,7 @@ def integrate_rev(sdf, res, rendered_attrib_g):
     )
     grad_phi_x = jnp.take_along_axis(grad_phi_x, inds, axis=0)
 
-    return (None, None, None, grad_depths, None, grad_attribs, grad_phi_x, None, None)
+    return (None, None, None, None, grad_depths, None, grad_attribs, grad_phi_x, None, None)
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
@@ -292,7 +296,7 @@ def masked_sdf_rev(sdf, res, g):
     return (None, *grads_input)
 
 
-def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
+def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
     xs, depths = find_intersections(sampler, sdf, ro, rd, params, rng, options)
 
     pts = vmap(lambda depth: ro + rd * depth)(depths)
@@ -337,7 +341,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     debug_attribs = (depths,) if options.isosurfaces_debug else tuple()
 
     return (
-        integrate(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options)
+        integrate(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options)
         + debug_attribs
     )
 

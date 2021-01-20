@@ -6,6 +6,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap, grad
+from jax.experimental.host_callback import id_tap, id_print
 
 from .rendering import (
     LinearSampler,
@@ -38,6 +39,17 @@ def manifold_loss(sdf, pts, sdf_params):
 def run_one_iter_of_sdrf(
     model, params, ray_origins, ray_directions, iteration, options, rng
 ):
+    uv = jnp.stack(
+        jnp.meshgrid(
+            jnp.arange(ray_origins.shape[0]),
+            jnp.arange(ray_origins.shape[1]),
+            ordering="xy",
+        ),
+        axis=-1,
+    )
+    uv = jnp.concatenate((uv, jnp.zeros(uv.shape[:2] + (1,))), axis=-1)
+    uv = uv.reshape((-1, 3))
+
     # reshape ro/rd
     ro = ray_origins.reshape((-1, 3))
     rd = ray_directions.reshape((-1, 3))
@@ -59,10 +71,11 @@ def run_one_iter_of_sdrf(
     )
     phi = lambda dist: gaussian_pdf(jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, sigma)
 
-    render_fn = lambda ro, rd, rng: render(
+    render_fn = lambda uv, ro, rd, rng: render(
         sampler,
         model.geometry,
         model.appearance,
+        uv,
         ro,
         rd,
         params,
@@ -72,14 +85,14 @@ def run_one_iter_of_sdrf(
     )
 
     outputs, rng = map_batched_rng(
-        jnp.stack((ro, rd), axis=-1),
+        jnp.stack((uv, ro, rd), axis=-1),
         lambda chunk_rng: render_fn(
-            chunk_rng[0][:, 0], chunk_rng[0][:, 1], chunk_rng[1]
+            chunk_rng[0][:, 0], chunk_rng[0][:, 1], chunk_rng[0][:, 2], chunk_rng[1]
         ),
         options.render.chunksize,
         True,
         rng,
     )
-    #outputs = vmap(lambda ro, rd: render_fn(ro, rd, rng))(ro, rd)
+    # outputs = vmap(lambda ro, rd: render_fn(ro, rd, rng))(ro, rd)
 
     return outputs

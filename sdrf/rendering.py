@@ -334,7 +334,7 @@ def render(sampler, sdf, appearance, ro, rd, params, rng, phi, options):
     # attribs = (vmap(intensity)(pts), vmap(depth)(depths))
 
     # fetch the sdf values if requested
-    debug_attribs = (depths,) if options.debug else tuple()
+    debug_attribs = (depths,) if options.isosurfaces_debug else tuple()
 
     return (
         integrate(sdf, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options)

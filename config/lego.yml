@@ -2,7 +2,7 @@ experiment:
   seed: 42
   train_iters: 200000
   jit_loop: 1
-  validate_every: 100
+  validate_every: 10
   save_every: 5000
   print_every: 100
 dataset:
@@ -64,16 +64,16 @@ sdrf:
     scale: 4.0
     num_samples: 2048
   sampler:
-    kind: "linear"
+    kind: "stratified"
     linear:
       support: 1.0E-1
     stratified:
-      support: 1.0E-1
+      support: 5.0E-2
     gaussian:
       sigma: 1.0E-1
   render:
     phi:
-      initial_sigma: 1.0E-1
+      initial_sigma: 5.0E-2
       lr_decay: 250
       lr_decay_factor: 0.1
     num_samples: 8
@@ -93,6 +93,6 @@ sdrf:
       outermost_linear: False
       activation: relu
     optimizer:
-      initial_lr: 1.0E-4
+      initial_lr: 3.0E-4
       lr_decay: 250
       lr_decay_factor: 0.1

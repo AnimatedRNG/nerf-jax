@@ -10,6 +10,8 @@ from jax import jit, vmap, grad, vjp
 from jax.ops import index_update, index_add, index
 from jax.tree_util import register_pytree_node, tree_map
 from jax.experimental.host_callback import id_tap, id_print
+import oryx
+import oryx.core as core
 
 from util import map_batched_rng
 from .root_finding import sphere_trace, sphere_trace_depth
@@ -190,6 +192,13 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         vs,
     ) = res
 
+    rendered_attrib_g = tuple(
+        core.sow(
+            rendered_attrib, name=f"debug_{idx}", tag="intermediate", mode="append"
+        )
+        for idx, rendered_attrib in enumerate(rendered_attrib_g)
+    )
+
     sorted_pts = vmap(lambda sorted_depth: ro + rd * sorted_depth)(sorted_depths)
 
     grad_sorted_depths = jnp.zeros_like(sorted_depths)
@@ -261,9 +270,26 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         jnp.take_along_axis(grad_sorted_attrib, inds, axis=0)
         for grad_sorted_attrib in grad_sorted_attribs
     )
+    grad_attribs = tuple(
+        core.sow(
+            grad_attrib, name=f"grad_attribs_{i}", tag="intermediate", mode="append"
+        )
+        for i, grad_attrib in enumerate(grad_attribs)
+    )
     grad_phi_x = jnp.take_along_axis(grad_phi_x, inds, axis=0)
 
-    return (None, None, None, None, grad_depths, None, grad_attribs, grad_phi_x, None, None)
+    return (
+        None,
+        None,
+        None,
+        None,
+        grad_depths,
+        None,
+        grad_attribs,
+        grad_phi_x,
+        None,
+        None,
+    )
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
@@ -339,9 +365,13 @@ def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
 
     # fetch the sdf values if requested
     debug_attribs = (depths,) if options.isosurfaces_debug else tuple()
+    rd = core.sow(rd, name="rd", tag="intermediate", mode="append")
+    uv = core.sow(uv, name="uv", tag="intermediate", mode="append")
 
     return (
-        integrate(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options)
+        integrate(
+            sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+        )
         + debug_attribs
     )
 
@@ -363,6 +393,38 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
 
     # return (rgb.reshape(*ro.shape[:2], -1), depth.reshape(*ro.shape[:2], -1)), rng
     return tuple(attrib.reshape(*ro.shape[:2], -1) for attrib in attribs), rng
+
+
+def extract_debug(reap_dict, height, width):
+    traces = set(reap_dict.keys())
+    traces.remove("uv")
+
+    traced_reshaped = {}
+    for trace in traces:
+        trace_length = reap_dict[trace].shape[-1]
+        uvs, debug = (
+            reap_dict["uv"][..., :2].astype(np.int64).reshape(-1, 2),
+            reap_dict[trace].reshape(-1),
+        )
+        uvs = vmap(
+            lambda uv: jnp.concatenate(
+                (
+                    jnp.repeat(uv[..., jnp.newaxis], trace_length, axis=-1),
+                    jnp.arange(trace_length)[jnp.newaxis, :],
+                ),
+                axis=-2,
+            )
+        )(uvs)
+        uvs = jnp.transpose(uvs, (0, 2, 1)).reshape(-1, 3)
+        debug_reshaped = jnp.zeros((height * width * trace_length))
+        debug_reshaped = jax.ops.index_update(
+            debug_reshaped,
+            jnp.ravel_multi_index(uvs.T, (height, width, trace_length)),
+            debug,
+        ).reshape(height, width, trace_length)
+
+        traced_reshaped[trace] = debug_reshaped
+    return traced_reshaped
 
 
 integrate.defvjp(integrate_fwd, integrate_rev)

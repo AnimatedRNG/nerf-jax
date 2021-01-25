@@ -44,10 +44,11 @@ def run_one_iter_of_sdrf(
             jnp.arange(ray_origins.shape[0]),
             jnp.arange(ray_origins.shape[1]),
             ordering="xy",
+            dtype=jnp.int64,
         ),
         axis=-1,
     )
-    uv = jnp.concatenate((uv, jnp.zeros(uv.shape[:2] + (1,))), axis=-1)
+    uv = jnp.concatenate((uv, jnp.zeros(uv.shape[:2] + (1,), dtype=jnp.int64)), axis=-1)
     uv = uv.reshape((-1, 3))
 
     # reshape ro/rd

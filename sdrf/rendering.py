@@ -228,13 +228,13 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         dvsddepth_i1 = -1 * dvsddepth_i
 
         dvsdattr_shape = (hs.shape[0], sorted_attribs[sorted_attrib_index].shape[-1])
-
         dvsdattr = diff_vjp(
-            jnp.broadcast_to(
-                sorted_phi_x[:-1] * valid_steps * hs * exp_os, dvsdattr_shape
-            ),
+            vmap(
+                lambda diag: jnp.eye(sorted_attribs[sorted_attrib_index].shape[-1])
+                * diag
+            )(sorted_phi_x[:-1] * valid_steps * hs * exp_os),
             rendered_attrib_g,
-        )
+        )[:, 0, :]
 
         dvsdphi = diff_vjp(
             sorted_attribs[sorted_attrib_index][:-1] * valid_steps * hs * exp_os,
@@ -364,16 +364,22 @@ def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
     # attribs = (vmap(intensity)(pts), vmap(depth)(depths))
 
     # fetch the sdf values if requested
-    debug_attribs = (depths,) if options.isosurfaces_debug else tuple()
+    debug_attribs = [depths] if options.isosurfaces_debug else []
     rd = core.sow(rd, name="rd", tag="intermediate", mode="append")
     uv = core.sow(uv, name="uv", tag="intermediate", mode="append")
 
-    return (
-        integrate(
-            sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+    output = (
+        list(
+            integrate(
+                sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+            )
         )
         + debug_attribs
     )
+
+    # clamp rgb
+    output[0] = jnp.clip(output[0], 0.0, 1.0)
+    return output
 
 
 def render_img(render_fn, rng, ray_bundle, chunksize):
@@ -395,36 +401,30 @@ def render_img(render_fn, rng, ray_bundle, chunksize):
     return tuple(attrib.reshape(*ro.shape[:2], -1) for attrib in attribs), rng
 
 
-def extract_debug(reap_dict, height, width):
-    traces = set(reap_dict.keys())
-    traces.remove("uv")
-
-    traced_reshaped = {}
-    for trace in traces:
-        trace_length = reap_dict[trace].shape[-1]
-        uvs, debug = (
-            reap_dict["uv"][..., :2].astype(np.int64).reshape(-1, 2),
-            reap_dict[trace].reshape(-1),
+def extract_debug(uv, reaped, height, width):
+    trace_length = reaped.shape[-1]
+    uvs, debug = (
+        uv[..., :2].astype(np.int64).reshape(-1, 2),
+        reaped.reshape(-1),
+    )
+    uvs = vmap(
+        lambda uv: jnp.concatenate(
+            (
+                jnp.repeat(uv[..., jnp.newaxis], trace_length, axis=-1),
+                jnp.arange(trace_length)[jnp.newaxis, :],
+            ),
+            axis=-2,
         )
-        uvs = vmap(
-            lambda uv: jnp.concatenate(
-                (
-                    jnp.repeat(uv[..., jnp.newaxis], trace_length, axis=-1),
-                    jnp.arange(trace_length)[jnp.newaxis, :],
-                ),
-                axis=-2,
-            )
-        )(uvs)
-        uvs = jnp.transpose(uvs, (0, 2, 1)).reshape(-1, 3)
-        debug_reshaped = jnp.zeros((height * width * trace_length))
-        debug_reshaped = jax.ops.index_update(
-            debug_reshaped,
-            jnp.ravel_multi_index(uvs.T, (height, width, trace_length)),
-            debug,
-        ).reshape(height, width, trace_length)
+    )(uvs)
+    uvs = jnp.transpose(uvs, (0, 2, 1)).reshape(-1, 3)
+    debug_reshaped = jnp.zeros((height * width * trace_length))
+    debug_reshaped = jax.ops.index_update(
+        debug_reshaped,
+        jnp.ravel_multi_index(uvs.T, (height, width, trace_length)),
+        debug,
+    ).reshape(height, width, trace_length)
 
-        traced_reshaped[trace] = debug_reshaped
-    return traced_reshaped
+    return debug_reshaped
 
 
 integrate.defvjp(integrate_fwd, integrate_rev)

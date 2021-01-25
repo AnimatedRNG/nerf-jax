@@ -9,6 +9,8 @@ from jax import vmap, jit
 import jax.numpy as jnp
 import pywavefront
 
+from util import map_batched
+
 bunny = None
 
 
@@ -32,15 +34,15 @@ def get_bunny():
         max_vertex = vs.max(axis=0)
         span = max_vertex - min_vertex
         span = jnp.array(span.max(), span.max(), span.max())
-        bunny = ((bunny - min_vertex) / span)
+        bunny = (bunny - min_vertex) / span
     return bunny
 
 
 def sdf_mesh(pt, mesh):
     # computes sdf of mesh (V, 3, 3) to pt (3,)
-    #return jnp.min(vmap(lambda tri: sdf_tri(pt, tri))(mesh), axis=0)
+    # return jnp.min(vmap(lambda tri: sdf_tri(pt, tri))(mesh), axis=0)
     dists = vmap(lambda tri: sdf_tri(pt, tri))(mesh)
-    #return jnp.min(dists, axis=0)
+    # return jnp.min(dists, axis=0)
     return dists[jnp.argmin(jnp.abs(dists), axis=0)]
 
 
@@ -80,29 +82,37 @@ def sdf_tri(pt, tri):
     )
 
 
-if __name__ == "__main__":
-    import cv2
-
-    bunny = jnp.array(get_bunny())
-
+def sdf_mesh_to_grid(sdf, min_range, max_range, resolution):
     xv, yv, zv = jnp.meshgrid(
-        jnp.linspace(-2.0, 2.0, 20),
-        jnp.linspace(-2.0, 2.0, 20),
-        jnp.linspace(-2.0, 3 .0, 16),
+        jnp.linspace(min_range[0], max_range[0], resolution[0]),
+        jnp.linspace(min_range[1], max_range[1], resolution[1]),
+        jnp.linspace(min_range[2], max_range[2], resolution[2]),
     )
     grid = jnp.stack((xv, yv, zv), axis=-1)
     grid_sh = grid.shape
 
-    sdf_mesh_jit = jit(sdf_mesh)
+    #sdfs = vmap(lambda grid_pt: sdf_mesh(grid_pt, sdf))(grid.reshape(-1, 3))
+    sdfs = map_batched(grid.reshape(-1, 3), lambda grid_pt: sdf_mesh(grid_pt, sdf), 512, True)
+    sdfs = sdfs.reshape(resolution[0], resolution[1], resolution[2])
 
-    sdfs = vmap(lambda grid_pt: sdf_mesh_jit(grid_pt, bunny))(grid.reshape(-1, 3))
-    sdfs = np.array(sdfs).reshape(20, 20, 16)
+    return sdfs
+
+
+if __name__ == "__main__":
+    import cv2
+
+    sdfs = np.array(
+        jit(sdf_mesh_to_grid, static_argnums=(3,))(
+            get_bunny(), (-2.0, -2.0, -1.0), (2.0, 2.0, 1.0), (32, 32, 32)
+        )
+    )
     print(sdfs)
-    for i in range(16):
+    #sdfs = (sdfs - sdfs.min()) / (sdfs.max() - sdfs.min())
+    for i in range(32):
         cv2.imshow(
             "sdf",
             cv2.resize(
-                sdfs[:, :, i],
+                sdfs[:, :, i] / 2.0,
                 dsize=None,
                 fx=16,
                 fy=16,

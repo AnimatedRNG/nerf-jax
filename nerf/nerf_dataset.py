@@ -117,7 +117,7 @@ def sampler(img_target, pose, intrinsics, rng, options):
     """
     pose_target = pose[:3, :4]
 
-    ray_origins, ray_directions = get_ray_bundle(
+    uv, ray_origins, ray_directions = get_ray_bundle(
         intrinsics.height, intrinsics.width, intrinsics.focal_length, pose_target
     )
 
@@ -135,10 +135,11 @@ def sampler(img_target, pose, intrinsics, rng, options):
 
     ray_origins = ray_origins[select_inds[:, 0], select_inds[:, 1], :]
     ray_directions = ray_directions[select_inds[:, 0], select_inds[:, 1], :]
+    uv = uv[select_inds[:, 0], select_inds[:, 1], :]
 
     target_s = img_target[select_inds[:, 0], select_inds[:, 1], :]
 
-    return ray_origins, ray_directions, target_s
+    return uv, ray_origins, ray_directions, target_s
 
 
 if __name__ == "__main__":

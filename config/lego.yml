@@ -81,6 +81,7 @@ sdrf:
     additive: True
     chunksize: 16192
     isosurfaces_debug: False
+    oryx_debug: True
   model:
     geometry:
       num_layers: 4

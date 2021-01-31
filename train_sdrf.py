@@ -138,12 +138,27 @@ def train_sdrf(config):
     config = serialize_box("SDRFConfig", config)
 
     def loss_fn(subrng, params, image_id, iteration):
-        ray_origins, ray_directions, target_s = sampler(
+        """ray_origins, ray_directions, target_s = sampler(
             images["train"][image_id],
             poses["train"][image_id],
             intrinsics["train"],
             subrng[0],
             config.dataset.sampler,
+        )"""
+
+        (uv, ray_origins, ray_directions), target_s = (
+            get_ray_bundle(
+                intrinsics["train"].height,
+                intrinsics["train"].width,
+                intrinsics["train"].focal_length,
+                poses["train"][image_id][:3, :4],
+            ),
+            images["train"][image_id],
+        )
+        ray_origins, ray_directions, target_s = (
+            ray_origins.reshape(1, -1, 3),
+            ray_directions.reshape(1, -1, 3),
+            target_s.reshape(1, -1, 3),
         )
 
         # pick a bunch of random points to use for eikonal/manifold loss
@@ -162,6 +177,7 @@ def train_sdrf(config):
         rgb, depth = run_one_iter_of_sdrf(
             sdrf,
             params,
+            uv,
             ray_origins,
             ray_directions,
             iteration,
@@ -179,6 +195,7 @@ def train_sdrf(config):
         losses = Losses(rgb_loss=rgb_loss, eikonal_loss=e_loss, manifold_loss=m_loss)
 
         loss_weights = jnp.array([3e3, 5e1, 1e2])
+        #loss_weights = jnp.array([3e3, 1e-9, 1e-9])
 
         return jnp.dot(jnp.array([rgb_loss, e_loss, m_loss]), loss_weights), losses
 
@@ -190,7 +207,7 @@ def train_sdrf(config):
             intrinsics["val"].focal_length,
         )
 
-        ray_origins, ray_directions = get_ray_bundle(
+        uv, ray_origins, ray_directions = get_ray_bundle(
             H,
             W,
             focal,
@@ -200,6 +217,7 @@ def train_sdrf(config):
         rgb, depth = run_one_iter_of_sdrf(
             sdrf,
             params,
+            uv.reshape(-1, 3),
             ray_origins.reshape(-1, 3),
             ray_directions.reshape(-1, 3),
             iteration,

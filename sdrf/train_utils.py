@@ -37,20 +37,8 @@ def manifold_loss(sdf, pts, sdf_params):
 
 
 def run_one_iter_of_sdrf(
-    model, params, ray_origins, ray_directions, iteration, options, rng
+        model, params, uv, ray_origins, ray_directions, iteration, options, rng
 ):
-    uv = jnp.stack(
-        jnp.meshgrid(
-            jnp.arange(ray_origins.shape[0]),
-            jnp.arange(ray_origins.shape[1]),
-            ordering="xy",
-            dtype=jnp.int64,
-        ),
-        axis=-1,
-    )
-    uv = jnp.concatenate((uv, jnp.zeros(uv.shape[:2] + (1,), dtype=jnp.int64)), axis=-1)
-    uv = uv.reshape((-1, 3))
-
     # reshape ro/rd
     ro = ray_origins.reshape((-1, 3))
     rd = ray_directions.reshape((-1, 3))

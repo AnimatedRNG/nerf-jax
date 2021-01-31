@@ -10,8 +10,6 @@ from jax import jit, vmap, grad, vjp
 from jax.ops import index_update, index_add, index
 from jax.tree_util import register_pytree_node, tree_map
 from jax.experimental.host_callback import id_tap, id_print
-import oryx
-import oryx.core as core
 
 from util import map_batched_rng
 from .root_finding import sphere_trace, sphere_trace_depth
@@ -171,6 +169,7 @@ def integrate_fwd(
             hs,
             os,
             vs,
+            options,
         ),
     )
 
@@ -190,16 +189,30 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         hs,
         os,
         vs,
+        options,
     ) = res
 
+    if options.oryx_debug:
+        import oryx
+        import oryx.core as core
+
+    trace = (
+        lambda name, attrib, tag: core.sow(attrib, name=name, tag=tag, mode="append")
+        if options.oryx_debug
+        else attrib
+    )
+
+    # trace gradient in
     rendered_attrib_g = tuple(
-        core.sow(
-            rendered_attrib, name=f"debug_{idx}", tag="intermediate", mode="append"
-        )
+        trace(f"rendered_attrib_g_{idx}", rendered_attrib, "vjp")
         for idx, rendered_attrib in enumerate(rendered_attrib_g)
     )
 
-    sorted_pts = vmap(lambda sorted_depth: ro + rd * sorted_depth)(sorted_depths)
+    sorted_pts = trace(
+        "sorted_pts",
+        vmap(lambda sorted_depth: ro + rd * sorted_depth)(sorted_depths),
+        "vjp",
+    )
 
     grad_sorted_depths = jnp.zeros_like(sorted_depths)
     grad_sorted_attribs = list(
@@ -211,9 +224,6 @@ def integrate_rev(sdf, res, rendered_attrib_g):
 
     def diff_vjp(inners, adjoint):
         if isinstance(adjoint, (tuple, list)):
-            """return vmap(
-                lambda inner: adjoint[sorted_attrib_index].T @ inner
-            )(inners)"""
             return vmap(
                 lambda inner: adjoint[sorted_attrib_index].reshape(1, -1) @ inner
             )(inners)
@@ -221,27 +231,43 @@ def integrate_rev(sdf, res, rendered_attrib_g):
             return vmap(lambda a, inner: a.reshape(1, -1) @ inner)(adjoint, inners)
 
     for sorted_attrib_index, sorted_attrib in enumerate(sorted_attribs):
-        dvsddepth_i = diff_vjp(
-            -1 * sorted_attrib[:-1] * sorted_phi_x[:-1] * valid_steps * exp_os,
-            rendered_attrib_g,
+        trace_i = lambda name, attrib: trace(
+            f"{name}_{sorted_attrib_index}", attrib, "vjp"
         )
-        dvsddepth_i1 = -1 * dvsddepth_i
+
+        dvsddepth_i = trace_i(
+            "dvsddepth_i",
+            diff_vjp(
+                -1 * sorted_attrib[:-1] * sorted_phi_x[:-1] * valid_steps * exp_os,
+                rendered_attrib_g,
+            ),
+        )
+        dvsddepth_i1 = trace_i("dvsddepth_i1", -1 * dvsddepth_i)
 
         dvsdattr_shape = (hs.shape[0], sorted_attribs[sorted_attrib_index].shape[-1])
-        dvsdattr = diff_vjp(
-            vmap(
-                lambda diag: jnp.eye(sorted_attribs[sorted_attrib_index].shape[-1])
-                * diag
-            )(sorted_phi_x[:-1] * valid_steps * hs * exp_os),
-            rendered_attrib_g,
-        )[:, 0, :]
-
-        dvsdphi = diff_vjp(
-            sorted_attribs[sorted_attrib_index][:-1] * valid_steps * hs * exp_os,
-            rendered_attrib_g,
+        dvsdattr = trace_i(
+            "dvsdattr",
+            diff_vjp(
+                vmap(
+                    lambda diag: jnp.eye(sorted_attribs[sorted_attrib_index].shape[-1])
+                    * diag
+                )(sorted_phi_x[:-1] * valid_steps * hs * exp_os),
+                rendered_attrib_g,
+            )[:, 0, :],
         )
 
-        dvsdos = diff_vjp(-vs[sorted_attrib_index], rendered_attrib_g)
+        dvsdphi = trace_i(
+            "dvsdphi",
+            diff_vjp(
+                sorted_attribs[sorted_attrib_index][:-1] * valid_steps * hs * exp_os,
+                rendered_attrib_g,
+            ),
+        )
+
+        dvsdos = trace_i(
+            "dvsdos",
+            diff_vjp(-vs[sorted_attrib_index], rendered_attrib_g),
+        )
 
         grad_sorted_depths = index_add(grad_sorted_depths, index[0], dvsddepth_i[0])
         grad_sorted_depths = index_add(grad_sorted_depths, index[-1], dvsddepth_i1[-1])
@@ -250,14 +276,17 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         )
         grad_phi_x = index_add(grad_phi_x, index[:-1], dvsdphi)
 
-        incoming_adjoints_os = jnp.cumsum(dvsdos[::-1], axis=0)[::-1]
-
-        dosddepth_i = diff_vjp(
-            -1.0 * sorted_phi_x[:-1] * valid_steps, incoming_adjoints_os
+        incoming_adjoints_os = trace_i(
+            "incoming_adjoints_os", jnp.cumsum(dvsdos[::-1], axis=0)[::-1]
         )
-        dosddepth_i1 = -dosddepth_i
 
-        dosdphi = diff_vjp(-1.0 * hs, incoming_adjoints_os)
+        dosddepth_i = trace_i(
+            "dosddepth_i",
+            diff_vjp(-1.0 * sorted_phi_x[:-1] * valid_steps, incoming_adjoints_os),
+        )
+        dosddepth_i1 = trace_i("dosddepth_i1", -dosddepth_i)
+
+        dosdphi = trace_i("dosdphi", diff_vjp(-1.0 * hs, incoming_adjoints_os))
 
         grad_sorted_depths = index_add(grad_sorted_depths, index[0], dosddepth_i[0])
         grad_sorted_depths = index_add(grad_sorted_depths, index[-1], dosddepth_i1[-1])
@@ -269,12 +298,6 @@ def integrate_rev(sdf, res, rendered_attrib_g):
     grad_attribs = tuple(
         jnp.take_along_axis(grad_sorted_attrib, inds, axis=0)
         for grad_sorted_attrib in grad_sorted_attribs
-    )
-    grad_attribs = tuple(
-        core.sow(
-            grad_attrib, name=f"grad_attribs_{i}", tag="intermediate", mode="append"
-        )
-        for i, grad_attrib in enumerate(grad_attribs)
     )
     grad_phi_x = jnp.take_along_axis(grad_phi_x, inds, axis=0)
 
@@ -323,6 +346,10 @@ def masked_sdf_rev(sdf, res, g):
 
 
 def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
+    if options.oryx_debug:
+        import oryx
+        import oryx.core as core
+
     xs, depths = find_intersections(sampler, sdf, ro, rd, params, rng, options)
 
     pts = vmap(lambda depth: ro + rd * depth)(depths)
@@ -365,8 +392,8 @@ def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
 
     # fetch the sdf values if requested
     debug_attribs = [depths] if options.isosurfaces_debug else []
-    rd = core.sow(rd, name="rd", tag="intermediate", mode="append")
-    uv = core.sow(uv, name="uv", tag="intermediate", mode="append")
+    rd = core.sow(rd, name="rd", tag="vjp", mode="append")
+    uv = core.sow(uv, name="uv", tag="vjp", mode="append")
 
     output = (
         list(

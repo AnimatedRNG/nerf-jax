@@ -38,17 +38,15 @@ def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
     ray_origins = jnp.broadcast_to(tfrom_cam2world[:3, -1], ray_directions.shape)
 
     uv = jnp.stack(
-            jnp.meshgrid(
-                jnp.arange(ray_origins.shape[0]),
-                jnp.arange(ray_origins.shape[1]),
-                ordering="xy",
-                dtype=jnp.int64,
-            ),
-            axis=-1,
-        )
-    uv = jnp.concatenate(
-        (uv, jnp.zeros(uv.shape[:2] + (1,), dtype=jnp.int64)), axis=-1
+        jnp.meshgrid(
+            jnp.arange(ray_origins.shape[0]),
+            jnp.arange(ray_origins.shape[1]),
+            ordering="xy",
+            dtype=jnp.int64,
+        ),
+        axis=-1,
     )
+    uv = jnp.concatenate((uv, jnp.zeros(uv.shape[:2] + (1,), dtype=jnp.int64)), axis=-1)
     uv = uv.reshape((-1, 3))
 
     return uv, ray_origins, ray_directions
@@ -157,3 +155,16 @@ def serialize_box(base_name, box):
     box_namedtuple = box_namedtuple_cls(**child_nodes)
 
     return box_namedtuple
+
+
+def gradient_visualization(g, min_val=None, max_val=None):
+    if min_val is not None and max_val is not None:
+        pass
+    elif len(g.shape) > 2:
+        min_val, max_val = jnp.amin(g, axis=(0, 1)), jnp.amax(g, axis=(0, 1))
+    else:
+        min_val, max_val = jnp.min(g.ravel()), jnp.max(g.ravel())
+
+    scaled = (g - min_val) / (max_val - min_val + 1e-9)
+
+    return scaled

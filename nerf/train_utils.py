@@ -29,9 +29,18 @@ def run_network(
     embedded_dirs = vmap(lambda x: positional_encoding(x, view_encoding_functions))(
         input_dirs_flat
     )
+    dim_xyz, dim_dir = embedded.shape[-1], embedded_dirs.shape[-1]
     embedded = jnp.concatenate((embedded, embedded_dirs), axis=-1)
 
-    radiance_field = map_batched(embedded, network_fn, chunksize, False)
+    #if options.use_viewdirs:
+    fused_fn = lambda x: jnp.concatenate(
+        network_fn(x[..., :dim_xyz], x[..., dim_xyz:]), axis=-1
+    )
+    #else:
+    #    fused_fn = lambda x: jnp.concatenate(
+    #        network_fn(x[..., :dim_xyz], None), axis=-1
+    #    )
+    radiance_field = map_batched(embedded, fused_fn, chunksize, False)
 
     radiance_field = radiance_field.reshape(
         list(pts.shape[:-1]) + [radiance_field.shape[-1]]
@@ -50,7 +59,12 @@ def predict_and_render_radiance(
     bounds = ray_batch[..., 6:8].reshape((-1, 1, 2))
     near, far = bounds[..., 0], bounds[..., 1]
 
-    t_vals = jnp.linspace(0.0, 1.0, options.num_coarse, dtype=ro.dtype,)
+    t_vals = jnp.linspace(
+        0.0,
+        1.0,
+        options.num_coarse,
+        dtype=ro.dtype,
+    )
     if not options.lindisp:
         z_vals = near * (1.0 - t_vals) + far * t_vals
     else:

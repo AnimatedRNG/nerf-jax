@@ -135,7 +135,7 @@ def sampler(img_target, pose, intrinsics, rng, options):
 
     ray_origins = ray_origins[select_inds[:, 0], select_inds[:, 1], :]
     ray_directions = ray_directions[select_inds[:, 0], select_inds[:, 1], :]
-    uv = uv[select_inds[:, 0], select_inds[:, 1], :]
+    uv = uv[select_inds[:, 0], select_inds[:, 1]]
 
     target_s = img_target[select_inds[:, 0], select_inds[:, 1], :]
 

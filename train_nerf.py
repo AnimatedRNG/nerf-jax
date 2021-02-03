@@ -45,23 +45,25 @@ def create_networks(config):
     )
 
     model_coarse = hk.transform(
-        lambda x: FlexibleNeRFModel(
+        lambda xyz, view: FlexibleNeRFModel(
             num_encoding_fn_xyz=config.nerf.model.coarse.num_encoding_fn_xyz,
             num_encoding_fn_dir=config.nerf.model.coarse.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.coarse.use_viewdirs,
-        )(x)
+        )(xyz, view)
     )
 
     model_fine = hk.transform(
-        lambda x: FlexibleNeRFModel(
+        lambda xyz, view: FlexibleNeRFModel(
             num_encoding_fn_xyz=config.nerf.model.fine.num_encoding_fn_xyz,
             num_encoding_fn_dir=config.nerf.model.fine.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.fine.use_viewdirs,
-        )(x)
+            w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+            b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+        )(xyz, view)
     )
 
     return (
@@ -75,11 +77,17 @@ def create_networks(config):
 def init_networks(
     rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
 ):
-    dummy_input_coarse = jnp.zeros((config.nerf.train.chunksize, sum(coarse_embedding)))
-    dummy_input_fine = jnp.zeros((config.nerf.train.chunksize, sum(fine_embedding)))
+    dummy_input_coarse_xyz, dummy_input_coarse_dir = (
+        jnp.zeros((config.nerf.train.chunksize, coarse_embedding[0])),
+        jnp.zeros((config.nerf.train.chunksize, coarse_embedding[1])),
+    )
+    dummy_input_fine_xyz, dummy_input_fine_dir = (
+        jnp.zeros((config.nerf.train.chunksize, fine_embedding[0])),
+        jnp.zeros((config.nerf.train.chunksize, fine_embedding[1])),
+    )
 
-    coarse_params = model_coarse.init(rng[0], dummy_input_coarse)
-    fine_params = model_fine.init(rng[1], dummy_input_fine)
+    coarse_params = model_coarse.init(rng[0], dummy_input_coarse_xyz, dummy_input_coarse_dir)
+    fine_params = model_fine.init(rng[1], dummy_input_fine_xyz, dummy_input_fine_dir)
 
     return (coarse_params, fine_params)
 
@@ -119,7 +127,9 @@ def train_nerf(config):
     basedir = config.dataset.basedir
     print(f"Loading images/poses from {basedir}...")
     images, poses, intrinsics = loader(
-        Path(".") / basedir, config.dataset.filter_chain, jax.devices()[0],
+        Path(".") / basedir,
+        config.dataset.filter_chain,
+        jax.devices()[0],
     )
     print("...done!")
 
@@ -153,7 +163,7 @@ def train_nerf(config):
             intrinsics["train"].focal_length,
         )
 
-        ray_origins, ray_directions, target_s = sampler(
+        uv, ray_origins, ray_directions, target_s = sampler(
             images["train"][image_id],
             poses["train"][image_id],
             intrinsics["train"],
@@ -200,8 +210,11 @@ def train_nerf(config):
             intrinsics["val"].focal_length,
         )
 
-        ray_origins, ray_directions = get_ray_bundle(
-            H, W, focal, poses["val"][0][:3, :4].astype(np.float32),
+        uv, ray_origins, ray_directions = get_ray_bundle(
+            H,
+            W,
+            focal,
+            poses["val"][0][:3, :4].astype(np.float32),
         )
 
         rng, rendered_images = run_one_iter_of_nerf(

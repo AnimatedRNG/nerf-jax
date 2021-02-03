@@ -16,12 +16,14 @@ def compute_embedding_size(
     return dim_xyz, dim_dir
 
 
-def linear(size, name):
+def linear(size, name, w_init, b_init):
     return hk.Linear(
         size,
         name=name,
-        w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
-        b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+        w_init=w_init,
+        b_init=b_init
+        # w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+        # b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
     )
 
 
@@ -36,6 +38,8 @@ class FlexibleNeRFModel(hk.Module):
         include_input_xyz=True,
         include_input_dir=True,
         use_viewdirs=True,
+        w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+        b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
         name=None,
     ):
         super(FlexibleNeRFModel, self).__init__(name=name)
@@ -47,37 +51,65 @@ class FlexibleNeRFModel(hk.Module):
         self.include_input_xyz = include_input_xyz
         self.include_input_dir = include_input_dir
         self.use_viewdirs = use_viewdirs
+        self.w_init = w_init
+        self.b_init = b_init
 
-    def __call__(self, x):
+    #def __call__(self, x):
+    def __call__(self, xyz, view):
         dim_xyz, dim_dir = compute_embedding_size(
             self.include_input_xyz,
             self.include_input_dir,
             self.num_encoding_fn_xyz,
             self.num_encoding_fn_dir,
         )
-        if not self.use_viewdirs:
+        '''if not self.use_viewdirs:
             dim_dir = 0
             xyz = x[..., : self.dim_xyz]
         else:
-            xyz, view = x[..., :dim_xyz], x[..., dim_xyz:]
+            xyz, view = x[..., :dim_xyz], x[..., dim_xyz:]'''
 
-        x = linear(self.hidden_size, name="layer1")(xyz)
+        x = linear(
+            self.hidden_size, name="layer1", w_init=self.w_init, b_init=self.b_init
+        )(xyz)
 
         for i in range(self.num_layers - 1):
             if i % self.skip_connect_every == 0 and i > 0 and i != self.num_layers - 1:
                 x = jnp.concatenate((x, xyz), axis=-1)
 
             x = jax.nn.relu(
-                linear(self.hidden_size, name="layers_xyz__{}".format(i))(x)
+                linear(
+                    self.hidden_size,
+                    name="layers_xyz__{}".format(i),
+                    w_init=self.w_init,
+                    b_init=self.b_init,
+                )(x)
             )
         if self.use_viewdirs:
-            feat = jax.nn.relu(linear(self.hidden_size, name="fc_feat")(x))
-            alpha = linear(1, name="fc_alpha")(x)
+            feat = jax.nn.relu(
+                linear(
+                    self.hidden_size,
+                    name="fc_feat",
+                    w_init=self.w_init,
+                    b_init=self.b_init,
+                )(x)
+            )
+            alpha = linear(1, name="fc_alpha", w_init=self.w_init, b_init=self.b_init)(
+                x
+            )
             x = jnp.concatenate((feat, view), axis=-1)
             x = jax.nn.relu(
-                linear(self.hidden_size // 2, name="layers_dir__{}".format(0))(x)
+                linear(
+                    self.hidden_size // 2,
+                    name="layers_dir__{}".format(0),
+                    w_init=self.w_init,
+                    b_init=self.b_init,
+                )(x)
             )
-            rgb = linear(3, name="fc_rgb")(x)
-            return jnp.concatenate((rgb, alpha), axis=-1)
+            rgb = linear(3, name="fc_rgb", w_init=self.w_init, b_init=self.b_init)(x)
+            # return jnp.concatenate((rgb, alpha), axis=-1)
+            return (rgb, alpha)
         else:
-            return linear(4, name="fc_out")(x)
+            return (
+                linear(3, name="fc_out", w_init=self.w_init, b_init=self.b_init)(x),
+                linear(1, name="fc_out", w_init=self.w_init, b_init=self.b_init)(x),
+            )

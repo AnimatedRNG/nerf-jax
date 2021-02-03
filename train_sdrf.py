@@ -21,11 +21,12 @@ from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
 from nerf import loader, sampler
-from util import get_ray_bundle, serialize_box
+from util import get_ray_bundle, gradient_visualization, serialize_box
 from sdrf import (
     SDRFParams,
     SDRF,
     Siren,
+    extract_debug,
     run_one_iter_of_sdrf,
     eikonal_loss,
     manifold_loss,
@@ -92,7 +93,32 @@ def init_networks(config, rng):
     )
 
 
+def log_debug_imgs(writer, reap_dict, height, width, i):
+    to_img = lambda x: np.array(
+        np.clip(jnp.transpose(gradient_visualization(x), axes=(2, 1, 0)), 0.0, 1.0)
+        * 255
+    ).astype(np.uint8)
+
+    uv = reap_dict["uv"]
+    for key, debug_img in reap_dict.items():
+        if key == "uv":
+            continue
+        if len(debug_img.shape) == 3:
+            extracted_img = extract_debug(uv, debug_img, height, width)
+            writer.add_image(key, to_img(extracted_img), i)
+        elif len(debug_img.shape) == 4:
+            for subimg_idx in range(debug_img.shape[2]):
+                extracted_img = extract_debug(
+                    uv, debug_img[:, :, subimg_idx, :], height, width
+                )
+                writer.add_image(f"{key}_{subimg_idx}", to_img(extracted_img), i)
+
+
 def train_sdrf(config):
+    if config.sdrf.render.oryx_debug:
+        import oryx
+        import oryx.core as core
+
     rng = jax.random.PRNGKey(config.experiment.seed)
     rng, *subrng = jax.random.split(rng, 3)
 
@@ -194,8 +220,9 @@ def train_sdrf(config):
 
         losses = Losses(rgb_loss=rgb_loss, eikonal_loss=e_loss, manifold_loss=m_loss)
 
-        loss_weights = jnp.array([3e3, 5e1, 1e2])
-        #loss_weights = jnp.array([3e3, 1e-9, 1e-9])
+        # loss_weights = jnp.array([3e3, 5e1, 1e2])
+        loss_weights = jnp.array([3e3, 1e2, 1e2])
+        # loss_weights = jnp.array([3e3, 1e-9, 1e-9])
 
         return jnp.dot(jnp.array([rgb_loss, e_loss, m_loss]), loss_weights), losses
 
@@ -228,6 +255,9 @@ def train_sdrf(config):
         return rgb.reshape(H, W, 3), depth.reshape(H, W, 1)
 
     value_and_grad_fn = jit(value_and_grad(loss_fn, argnums=(1,), has_aux=True))
+    reap_fn = jit(
+        core.reap(value_and_grad(loss_fn, argnums=(1,), has_aux=True), tag="vjp")
+    )
     sdf_jit_fn = jit(lambda pts, ps: vmap(lambda pt: sdrf.geometry(pt, ps))(pts))
 
     height, width = intrinsics["val"].height, intrinsics["val"].width
@@ -255,22 +285,13 @@ def train_sdrf(config):
         writer.add_scalar("train/manifold_loss", losses.manifold_loss, i)
 
         if i % config.experiment.validate_every == 0:
+            if config.sdrf.render.oryx_debug:
+                reap_dict = reap_fn(subrng, params, train_image_seq[i], i)
+                log_debug_imgs(writer, reap_dict, height, width, i)
+
             start = time.time()
             rgb, depth = validation(subrng, params, 0, i)
             end = time.time()
-
-            pts = jnp.stack(
-                jnp.meshgrid(
-                    jnp.linspace(-2.0, 2.0, 64),
-                    jnp.linspace(-2.0, 2.0, 64),
-                    jnp.linspace(-2.0, 2.0, 64),
-                ),
-                axis=-1,
-            )
-            grid = pts[:, :, 32, :].reshape(64, 64, 3)
-            dists = sdf_jit_fn(grid.reshape(-1, 3), params.geometry).reshape(64, 64, 1)
-            dists_min, dists_max = dists.flatten().min(), dists.flatten().max()
-            dists_span = dists_max - dists_min
 
             to_img = lambda x: np.array(
                 np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255
@@ -278,8 +299,8 @@ def train_sdrf(config):
 
             writer.add_image("validation/rgb", to_img(rgb), i)
             writer.add_image("validation/depth", to_img(depth), i)
-            writer.add_image("validation/dists", to_img(dists + 2.0), i)
             writer.add_image("validation/target", to_img(images["val"][0]))
+
             print(f"Time to render {width}x{height} image: {(end - start)}")
 
 

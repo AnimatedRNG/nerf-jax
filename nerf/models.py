@@ -3,9 +3,10 @@ import jax
 import jax.numpy as jnp
 import haiku as hk
 import functools
+import enum
 
 
- def compute_embedding_size(
+def compute_embedding_size(
     include_input_xyz, include_input_dir, num_encoding_fn_xyz, num_encoding_fn_dir
 ):
     include_input_xyz = 3 if include_input_xyz else 0
@@ -25,6 +26,12 @@ def linear(size, name, w_init, b_init):
         # w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
         # b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
     )
+
+
+class NeRFModelMode(enum.IntEnum):
+    BOTH = 0
+    GEOMETRY = 1
+    APPEARANCE = 2
 
 
 class FlexibleNeRFModel(hk.Module):
@@ -54,7 +61,7 @@ class FlexibleNeRFModel(hk.Module):
         self.w_init = w_init
         self.b_init = b_init
 
-    def __call__(self, xyz, view):
+    def __call__(self, xyz, view, mode=NeRFModelMode.BOTH):
         dim_xyz, dim_dir = compute_embedding_size(
             self.include_input_xyz,
             self.include_input_dir,
@@ -90,6 +97,10 @@ class FlexibleNeRFModel(hk.Module):
             alpha = linear(1, name="fc_alpha", w_init=self.w_init, b_init=self.b_init)(
                 x
             )
+
+            if mode == NeRFModelMode.GEOMETRY:
+                return alpha
+
             x = jnp.concatenate((feat, view), axis=-1)
             x = jax.nn.relu(
                 linear(
@@ -100,9 +111,19 @@ class FlexibleNeRFModel(hk.Module):
                 )(x)
             )
             rgb = linear(3, name="fc_rgb", w_init=self.w_init, b_init=self.b_init)(x)
-            return (rgb, alpha)
+
+            if mode == NeRFModelMode.BOTH:
+                return (rgb, alpha)
+            else:
+                return alpha
         else:
-            return (
-                linear(3, name="fc_out", w_init=self.w_init, b_init=self.b_init)(x),
+            geo, appearance = (
                 linear(1, name="fc_out", w_init=self.w_init, b_init=self.b_init)(x),
+                linear(3, name="fc_out", w_init=self.w_init, b_init=self.b_init)(x),
             )
+            if mode == NeRFModelMode.GEOMETRY:
+                return geo
+            elif mode == NeRFModelMode.APPEARANCE:
+                return appearance
+            else:
+                return (appearance, geo)

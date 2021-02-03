@@ -5,7 +5,7 @@ import haiku as hk
 import functools
 
 
-def compute_embedding_size(
+ def compute_embedding_size(
     include_input_xyz, include_input_dir, num_encoding_fn_xyz, num_encoding_fn_dir
 ):
     include_input_xyz = 3 if include_input_xyz else 0
@@ -54,7 +54,6 @@ class FlexibleNeRFModel(hk.Module):
         self.w_init = w_init
         self.b_init = b_init
 
-    #def __call__(self, x):
     def __call__(self, xyz, view):
         dim_xyz, dim_dir = compute_embedding_size(
             self.include_input_xyz,
@@ -62,11 +61,6 @@ class FlexibleNeRFModel(hk.Module):
             self.num_encoding_fn_xyz,
             self.num_encoding_fn_dir,
         )
-        '''if not self.use_viewdirs:
-            dim_dir = 0
-            xyz = x[..., : self.dim_xyz]
-        else:
-            xyz, view = x[..., :dim_xyz], x[..., dim_xyz:]'''
 
         x = linear(
             self.hidden_size, name="layer1", w_init=self.w_init, b_init=self.b_init
@@ -106,7 +100,6 @@ class FlexibleNeRFModel(hk.Module):
                 )(x)
             )
             rgb = linear(3, name="fc_rgb", w_init=self.w_init, b_init=self.b_init)(x)
-            # return jnp.concatenate((rgb, alpha), axis=-1)
             return (rgb, alpha)
         else:
             return (

@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import haiku as hk
 
-from nerf import positional_encoding
+from nerf import positional_encoding, compute_embedding_size
 
 
 def get_fan(shape):
@@ -31,7 +31,11 @@ class SineInitializer(hk.initializers.Initializer):
 
         if self.first_layer:
             return jax.random.uniform(
-                hk.next_rng_key(), shape, dtype, -1.0 / fan_in, 1.0 / fan_in,
+                hk.next_rng_key(),
+                shape,
+                dtype,
+                -1.0 / fan_in,
+                1.0 / fan_in,
             )
         else:
             return jax.random.uniform(
@@ -109,7 +113,10 @@ class IGR(hk.Module):
             w_init = w_init_last if layer_id == len(self.depths) - 2 else w_init_n
             b_init = b_init_last if layer_id == len(self.depths) - 2 else b_init_n
             x = hk.Linear(
-                out_dim, w_init=w_init, b_init=b_init, name=f"layer_{layer_id}",
+                out_dim,
+                w_init=w_init,
+                b_init=b_init,
+                name=f"layer_{layer_id}",
             )(x)
 
             if layer_id < len(self.depths) - 2:
@@ -157,7 +164,10 @@ class Siren(hk.Module):
 
         x = nl(
             hk.Linear(
-                self.hidden_features, w_init=w_init_0, b_init=b_init, name="layer_0",
+                self.hidden_features,
+                w_init=w_init_0,
+                b_init=b_init,
+                name="layer_0",
             )(x)
         )
 

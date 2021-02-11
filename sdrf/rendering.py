@@ -126,10 +126,14 @@ def integrate_fwd(
     # is invalid
     valid_steps = jnp.logical_and(sorted_valids[:-1], sorted_valids[1:])
 
+    mask_valid = lambda a, valid: jax.lax.cond(
+        valid, lambda a: a, lambda a: jnp.zeros_like(a), a
+    )
+
     # Now we compute the inner integral, masking out any segments that are
     # invalid. `os` is like an opacity function -- it is like (1 - Transmittance)
     # at any point on the ray
-    os = vmap(lambda phi_x, h, valid: valid * phi_x * h)(
+    os = vmap(lambda phi_x, h, valid: mask_valid(phi_x * h, valid[0]))(
         sorted_phi_x[:-1], hs, valid_steps
     )
     os = jnp.cumsum(os, axis=0)
@@ -138,11 +142,9 @@ def integrate_fwd(
     # [rgb, depth, etc].
     vs = tuple(
         vmap(
-            lambda phi_x, h, attrib, depth, o, valid: valid
-            * phi_x
-            * attrib
-            * jnp.exp(-o)
-            * h
+            lambda phi_x, h, attrib, depth, o, valid: mask_valid(
+                phi_x * attrib * jnp.exp(-o) * h, valid[0]
+            )
         )(
             sorted_phi_x[:-1],
             hs,
@@ -354,7 +356,7 @@ def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
 
     pts = vmap(lambda depth: ro + rd * depth)(depths)
 
-    intensity = lambda pt: appearance(pt, rd, params.appearance)
+    intensity = lambda pt: jnp.clip(appearance(pt, rd, params.appearance), 0.0, 1.0)
     depth = lambda depth: depth
 
     # Mask that determines if a given sphere tracing attempt had

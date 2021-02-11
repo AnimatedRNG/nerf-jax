@@ -61,8 +61,7 @@ def create_networks(config):
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.fine.use_viewdirs,
-            w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
-            b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+            geometric_init=False
         )(xyz, view)
     )
 
@@ -86,7 +85,9 @@ def init_networks(
         jnp.zeros((config.nerf.train.chunksize, fine_embedding[1])),
     )
 
-    coarse_params = model_coarse.init(rng[0], dummy_input_coarse_xyz, dummy_input_coarse_dir)
+    coarse_params = model_coarse.init(
+        rng[0], dummy_input_coarse_xyz, dummy_input_coarse_dir
+    )
     fine_params = model_fine.init(rng[1], dummy_input_fine_xyz, dummy_input_fine_dir)
 
     return (coarse_params, fine_params)

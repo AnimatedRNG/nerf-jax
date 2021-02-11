@@ -17,17 +17,6 @@ def compute_embedding_size(
     return dim_xyz, dim_dir
 
 
-def linear(size, name, w_init, b_init):
-    return hk.Linear(
-        size,
-        name=name,
-        w_init=w_init,
-        b_init=b_init
-        # w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
-        # b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
-    )
-
-
 class NeRFModelMode(enum.IntEnum):
     BOTH = 0
     GEOMETRY = 1
@@ -47,6 +36,7 @@ class FlexibleNeRFModel(hk.Module):
         use_viewdirs=True,
         w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
         b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+        geometric_init=False,
         name=None,
     ):
         super(FlexibleNeRFModel, self).__init__(name=name)
@@ -58,8 +48,30 @@ class FlexibleNeRFModel(hk.Module):
         self.include_input_xyz = include_input_xyz
         self.include_input_dir = include_input_dir
         self.use_viewdirs = use_viewdirs
-        self.w_init = w_init
-        self.b_init = b_init
+        self.geometric_init = geometric_init
+
+    def linear(self, size, name, l=None, skip=False):
+        if l is None or not self.geometric_init:
+            w_init, b_init = (
+                hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+                hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+            )
+        else:
+            if l == self.num_layers - 1:
+                pass
+            elif l == 0:
+                pass
+            elif skip:
+                pass
+            else:
+                pass
+
+        return hk.Linear(
+            size,
+            name=name,
+            w_init=w_init,
+            b_init=b_init,
+        )
 
     def __call__(self, xyz, view, mode=NeRFModelMode.BOTH):
         dim_xyz, dim_dir = compute_embedding_size(
@@ -69,48 +81,40 @@ class FlexibleNeRFModel(hk.Module):
             self.num_encoding_fn_dir,
         )
 
-        x = linear(
-            self.hidden_size, name="layer1", w_init=self.w_init, b_init=self.b_init
-        )(xyz)
+        x = self.linear(self.hidden_size, name="layer1", l=0)(xyz)
 
         for i in range(self.num_layers - 1):
             if i % self.skip_connect_every == 0 and i > 0 and i != self.num_layers - 1:
+                skip = True
                 x = jnp.concatenate((x, xyz), axis=-1)
+                if self.geometric_init:
+                    x /= jnp.sqrt(2.0)
+            else:
+                skip = False
 
             x = jax.nn.relu(
-                linear(
+                self.linear(
                     self.hidden_size,
                     name="layers_xyz__{}".format(i),
-                    w_init=self.w_init,
-                    b_init=self.b_init,
+                    l=i + 1,
+                    skip=skip,
                 )(x)
             )
         if self.use_viewdirs:
-            feat = jax.nn.relu(
-                linear(
-                    self.hidden_size,
-                    name="fc_feat",
-                    w_init=self.w_init,
-                    b_init=self.b_init,
-                )(x)
-            )
-            alpha = linear(1, name="fc_alpha", w_init=self.w_init, b_init=self.b_init)(
-                x
-            )
+            feat = jax.nn.relu(self.linear(self.hidden_size, name="fc_feat")(x))
+            alpha = self.linear(1, name="fc_alpha", l=self.num_layers)(x)
 
             if mode == NeRFModelMode.GEOMETRY:
                 return alpha
 
             x = jnp.concatenate((feat, view), axis=-1)
             x = jax.nn.relu(
-                linear(
+                self.linear(
                     self.hidden_size // 2,
                     name="layers_dir__{}".format(0),
-                    w_init=self.w_init,
-                    b_init=self.b_init,
                 )(x)
             )
-            rgb = linear(3, name="fc_rgb", w_init=self.w_init, b_init=self.b_init)(x)
+            rgb = self.linear(3, name="fc_rgb")(x)
 
             if mode == NeRFModelMode.BOTH:
                 return (rgb, alpha)
@@ -118,8 +122,8 @@ class FlexibleNeRFModel(hk.Module):
                 return alpha
         else:
             geo, appearance = (
-                linear(1, name="fc_out", w_init=self.w_init, b_init=self.b_init)(x),
-                linear(3, name="fc_out", w_init=self.w_init, b_init=self.b_init)(x),
+                self.linear(1, name="fc_out", l=self.num_layers + 1)(x),
+                self.linear(3, name="fc_out")(x),
             )
             if mode == NeRFModelMode.GEOMETRY:
                 return geo

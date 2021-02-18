@@ -7,19 +7,7 @@ import jax.numpy as jnp
 import haiku as hk
 
 from nerf import positional_encoding, compute_embedding_size
-
-
-def get_fan(shape):
-    if len(shape) < 1:
-        fan_in = fan_out = 1
-    elif len(shape) == 1:
-        fan_in = fan_out = shape[0]
-    elif len(shape) == 2:
-        fan_in, fan_out = shape
-    else:
-        raise Exception("invalid shape for SIREN!")
-
-    return fan_in, fan_out
+from util import get_fan
 
 
 class SineInitializer(hk.initializers.Initializer):

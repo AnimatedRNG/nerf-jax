@@ -1,9 +1,14 @@
+from typing import Sequence, Union
+import enum
+import functools
+
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax.ops import index_update, index
 import haiku as hk
-import functools
-import enum
+
+from util import get_fan
 
 
 def compute_embedding_size(
@@ -15,6 +20,26 @@ def compute_embedding_size(
     dim_dir = include_input_dir + 2 * 3 * num_encoding_fn_dir
 
     return dim_xyz, dim_dir
+
+
+class SALWeightInitializer(hk.initializers.Initializer):
+    def __init__(self, is_skip_in=True):
+        self.is_skip_in = is_skip_in
+
+    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
+        fan_in, fan_out = get_fan(shape)
+
+        zero_weight = jnp.zeros(shape, dtype=dtype)
+        normal_weight = jax.random.normal(hk.next_rng_key(), shape, dtype) * (
+            jnp.sqrt(2) / jnp.sqrt(fan_out)
+        )
+
+        if self.is_skip_in:
+            weights = zero_weight
+            weights = index_update(weights, index[:3, :], normal_weight)
+        else:
+            weights = normal_weight
+        return weights
 
 
 class NeRFModelMode(enum.IntEnum):
@@ -34,8 +59,6 @@ class FlexibleNeRFModel(hk.Module):
         include_input_xyz=True,
         include_input_dir=True,
         use_viewdirs=True,
-        w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
-        b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
         geometric_init=False,
         name=None,
     ):
@@ -58,13 +81,24 @@ class FlexibleNeRFModel(hk.Module):
             )
         else:
             if l == self.num_layers - 1:
-                pass
-            elif l == 0:
-                pass
-            elif skip:
-                pass
+                w_init, b_init = (
+                    hk.initializers.RandomNormal(
+                        mean=jnp.sqrt(jnp.pi) / jnp.sqrt(self.hidden_size)
+                    ),
+                    hk.initializers.Constant(-1.0),
+                )
+            elif l == 0 or skip:
+                w_init, b_init = (
+                    SALWeightInitializer(skip),
+                    hk.initializers.Constant(0.0),
+                )
             else:
-                pass
+                w_init, b_init = (
+                    hk.initializers.RandomNormal(
+                        mean=jnp.sqrt(2.0) / jnp.sqrt(self.hidden_size)
+                    ),
+                    hk.initializers.Constant(-1.0),
+                )
 
         return hk.Linear(
             size,
@@ -88,7 +122,7 @@ class FlexibleNeRFModel(hk.Module):
                 skip = True
                 x = jnp.concatenate((x, xyz), axis=-1)
                 if self.geometric_init:
-                    x /= jnp.sqrt(2.0)
+                    x = x / jnp.sqrt(2.0)
             else:
                 skip = False
 
@@ -115,9 +149,13 @@ class FlexibleNeRFModel(hk.Module):
                 )(x)
             )
             rgb = self.linear(3, name="fc_rgb")(x)
+            #rgb = jnp.tanh(rgb)
+            rgb = jax.nn.sigmoid(rgb)
 
             if mode == NeRFModelMode.BOTH:
                 return (rgb, alpha)
+            elif mode == NeRFModelMode.APPEARANCE:
+                return rgb
             else:
                 return alpha
         else:

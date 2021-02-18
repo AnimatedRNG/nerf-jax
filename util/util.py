@@ -51,6 +51,17 @@ def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
 
     return uv, ray_origins, ray_directions
 
+def get_fan(shape):
+    if len(shape) < 1:
+        fan_in = fan_out = 1
+    elif len(shape) == 1:
+        fan_in = fan_out = shape[0]
+    elif len(shape) == 2:
+        fan_in, fan_out = shape
+    else:
+        raise Exception("invalid shape for SIREN!")
+
+    return fan_in, fan_out
 
 # @functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched(tensor, f, chunksize, use_vmap):

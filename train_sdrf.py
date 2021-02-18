@@ -231,8 +231,9 @@ def train_sdrf(config):
         losses = Losses(rgb_loss=rgb_loss, eikonal_loss=e_loss, manifold_loss=m_loss)
 
         # loss_weights = jnp.array([3e3, 5e1, 1e2])
-        loss_weights = jnp.array([3e3, 1e2, 1e2])
-        # loss_weights = jnp.array([3e3, 1e-9, 1e-9])
+        #loss_weights = jnp.array([3e3, 1e-9, 1e-9])
+        # loss_weights = jnp.array([3e3, 1e2, 1e2])
+        loss_weights = jnp.array([3e3, 1e2, 1e-9])
 
         return jnp.dot(jnp.array([rgb_loss, e_loss, m_loss]), loss_weights), losses
 

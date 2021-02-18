@@ -22,14 +22,14 @@ def gaussian_pdf(x, mu, sigma):
 
 
 class GaussianSampler(object):
-    def __init__(self, sigma):
-        self.sigma = sigma
+    def __init__(self):
+        pass
 
-    def sample(self, rng, num_samples):
-        return jax.random.normal(rng, (num_samples,)) * self.sigma
+    def sample(self, rng, num_samples, sigma):
+        return jax.random.normal(rng, (num_samples,)) * sigma
 
-    def pdf(self, x):
-        return gaussian_pdf(x, 0.0, self.sigma)
+    def pdf(self, x, sigma):
+        return gaussian_pdf(x, 0.0, sigma)
 
 
 class ExponentialSampler(object):
@@ -60,13 +60,13 @@ class LinearSampler(object):
 
 
 class StratifiedSampler(object):
-    def __init__(self, support):
-        self.support = support
+    def __init__(self):
+        pass
 
-    def sample(self, rng, num_samples):
-        partition_size = (self.support * 2.0) / num_samples
+    def sample(self, rng, num_samples, support):
+        partition_size = (support * 2.0) / num_samples
 
-        '''samples = jnp.zeros(num_samples + 1)
+        """samples = jnp.zeros(num_samples + 1)
         linear = jnp.linspace(
             -self.support, self.support, num_samples
         ) + jax.random.normal(rng, (num_samples,)) * (partition_size * 0.2)
@@ -76,18 +76,18 @@ class StratifiedSampler(object):
         samples = index_update(
             samples, index[num_samples // 2 + 1 :], linear[num_samples // 2 :]
         )
-        return samples'''
+        return samples"""
 
-        return jnp.linspace(
-            -self.support, self.support, num_samples
-        ) + jax.random.normal(rng, (num_samples,)) * (partition_size * 0.2)
+        return jnp.linspace(-support, support, num_samples) + jax.random.normal(
+            rng, (num_samples,)
+        ) * (partition_size * 0.2)
 
-    def pdf(self, x):
-        return 1.0 / (self.support * 2.0)
+    def pdf(self, x, support):
+        return 1.0 / (support * 2.0)
 
 
-def find_intersections(sampler, sdf, ro, rd, params, rng, options):
-    xs = sampler.sample(rng, options.num_samples)
+def find_intersections(sampler, sdf, ro, rd, params, rng, sigma, options):
+    xs = sampler.sample(rng, options.num_samples, sigma)
     intersect = lambda iso: sphere_trace_depth(
         sdf, ro, rd, iso, options.truncation_distance, params.geometry
     )
@@ -358,12 +358,12 @@ def masked_sdf_rev(sdf, res, g):
     return (None, *grads_input)
 
 
-def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
+def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, sigma, options):
     if options.oryx_debug:
         import oryx
         import oryx.core as core
 
-    xs, depths = find_intersections(sampler, sdf, ro, rd, params, rng, options)
+    xs, depths = find_intersections(sampler, sdf, ro, rd, params, rng, sigma, options)
 
     pts = vmap(lambda depth: ro + rd * depth)(depths)
 
@@ -376,7 +376,7 @@ def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
     valid_mask = error < 1e-2
     valid_mask = jnp.reshape(valid_mask, (-1, 1))
 
-    phi_x = vmap(lambda pt, valid: phi(masked_sdf(sdf, valid, pt, params)))(
+    phi_x = vmap(lambda pt, valid: phi(masked_sdf(sdf, valid, pt, params), sigma))(
         pts, valid_mask[:, 0]
     )
     phi_x = phi_x.reshape(-1, 1)

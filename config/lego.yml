@@ -35,7 +35,7 @@ nerf:
       num_encoding_fn_dir: 4
     optimizer:
       initial_lr: 5.0E-3
-      lr_decay: 250
+      lr_decay: 25
       lr_decay_factor: 0.1
   train:
     use_viewdirs: True
@@ -64,7 +64,7 @@ sdrf:
     scale: 4.0
     num_samples: 2048
   sampler:
-    kind: "stratified"
+    kind: "gaussian"
     linear:
       support: 5.0E-2
     stratified:
@@ -74,8 +74,9 @@ sdrf:
   render:
     phi:
       initial_sigma: 1.0E-1
-      lr_decay: 250
-      lr_decay_factor: 0.1
+      #lr_decay: 250
+      lr_decay: 2
+      lr_decay_factor: 0.2
     num_samples: 8
     truncation_distance: 1.0
     additive: True
@@ -95,5 +96,5 @@ sdrf:
       activation: relu
     optimizer:
       initial_lr: 1.0E-4
-      lr_decay: 25000
+      lr_decay: 2
       lr_decay_factor: 0.1

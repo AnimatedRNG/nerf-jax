@@ -44,13 +44,16 @@ def run_one_iter_of_sdrf(
     rd = ray_directions.reshape((-1, 3))
 
     if options.sampler.kind == "linear":
-        sampler = LinearSampler(options.sampler.linear.support)
+        #sampler = LinearSampler(options.sampler.linear.support)
+        sampler = LinearSampler()
     elif options.sampler.kind == "stratified":
-        sampler = StratifiedSampler(options.sampler.stratified.support)
+        #sampler = StratifiedSampler(options.sampler.stratified.support)
+        sampler = StratifiedSampler()
     elif options.sampler.kind == "exponential":
         sampler = ExponentialSampler()
     elif options.sampler.kind == "gaussian":
-        sampler = GaussianSampler(options.sampler.gaussian.sigma)
+        #sampler = GaussianSampler(options.sampler.gaussian.sigma)
+        sampler = GaussianSampler()
     else:
         raise Exception("Invalid sampler type")
 
@@ -58,8 +61,10 @@ def run_one_iter_of_sdrf(
     sigma = options.render.phi.initial_sigma * options.render.phi.lr_decay_factor ** (
         iteration / num_decay_steps
     )
-    phi = lambda dist: gaussian_pdf(jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, sigma)
-    #phi = lambda dist: gaussian_pdf(dist, 0.0, sigma)
+    phi = lambda dist, s: gaussian_pdf(
+        jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, s
+    )
+    #phi = lambda dist, s: gaussian_pdf(dist, 0.0, s)
 
     render_fn = lambda uv, ro, rd, rng: render(
         sampler,
@@ -71,6 +76,7 @@ def run_one_iter_of_sdrf(
         params,
         rng,
         phi,
+        sigma,
         options.render,
     )
 

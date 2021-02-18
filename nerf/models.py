@@ -51,10 +51,10 @@ class NeRFModelMode(enum.IntEnum):
 class FlexibleNeRFModel(hk.Module):
     def __init__(
         self,
-        num_layers=4,
+        num_layers=8,
         hidden_size=128,
-        skip_connect_every=4,
-        num_encoding_fn_xyz=6,
+        skip_connect_every=3,
+        num_encoding_fn_xyz=10,
         num_encoding_fn_dir=4,
         include_input_xyz=True,
         include_input_dir=True,
@@ -149,7 +149,7 @@ class FlexibleNeRFModel(hk.Module):
                 )(x)
             )
             rgb = self.linear(3, name="fc_rgb")(x)
-            #rgb = jnp.tanh(rgb)
+            # rgb = jnp.tanh(rgb)
             rgb = jax.nn.sigmoid(rgb)
 
             if mode == NeRFModelMode.BOTH:

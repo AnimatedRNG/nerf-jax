@@ -174,15 +174,15 @@ def train_sdrf(config):
     config = serialize_box("SDRFConfig", config)
 
     def loss_fn(subrng, params, image_id, iteration):
-        """ray_origins, ray_directions, target_s = sampler(
+        uv, ray_origins, ray_directions, target_s = sampler(
             images["train"][image_id],
             poses["train"][image_id],
             intrinsics["train"],
             subrng[0],
             config.dataset.sampler,
-        )"""
+        )
 
-        (uv, ray_origins, ray_directions), target_s = (
+        '''(uv, ray_origins, ray_directions), target_s = (
             get_ray_bundle(
                 intrinsics["train"].height,
                 intrinsics["train"].width,
@@ -190,7 +190,7 @@ def train_sdrf(config):
                 poses["train"][image_id][:3, :4],
             ),
             images["train"][image_id],
-        )
+        )'''
         ray_origins, ray_directions, target_s = (
             ray_origins.reshape(1, -1, 3),
             ray_directions.reshape(1, -1, 3),
@@ -309,7 +309,7 @@ def train_sdrf(config):
             ).astype(np.uint8)
 
             writer.add_image("validation/rgb", to_img(rgb), i)
-            writer.add_image("validation/depth", to_img(depth), i)
+            writer.add_image("validation/depth", to_img(depth / depth.max()), i)
             writer.add_image("validation/target", to_img(images["val"][0]))
 
             print(f"Time to render {width}x{height} image: {(end - start)}")

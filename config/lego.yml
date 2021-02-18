@@ -64,13 +64,13 @@ sdrf:
     scale: 4.0
     num_samples: 2048
   sampler:
-    kind: "stratified"
+    kind: "linear"
     linear:
-      support: 1.0E-1
+      support: 5.0E-2
     stratified:
       support: 5.0E-2
     gaussian:
-      sigma: 1.0E-1
+      sigma: 5.0E-2
   render:
     phi:
       initial_sigma: 5.0E-2
@@ -95,5 +95,5 @@ sdrf:
       activation: relu
     optimizer:
       initial_lr: 1.0E-4
-      lr_decay: 250
+      lr_decay: 25000
       lr_decay_factor: 0.1

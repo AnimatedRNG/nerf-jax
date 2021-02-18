@@ -20,7 +20,7 @@ import haiku as hk
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
-from nerf import loader, sampler
+from nerf import loader, sampler, FlexibleNeRFModel, NeRFModelMode
 from util import get_ray_bundle, gradient_visualization, serialize_box
 from sdrf import (
     SDRFParams,
@@ -37,7 +37,7 @@ register_pytree_node(Losses, lambda xs: (tuple(xs), None), lambda _, xs: Losses(
 
 
 def init_networks(config, rng):
-    geometry_fn = hk.transform(
+    """geometry_fn = hk.transform(
         lambda x: Siren(
             3,
             1,
@@ -56,6 +56,17 @@ def init_networks(config, rng):
             config.geometry.outermost_linear,
             config.geometry.activation,
         )(jnp.concatenate((pt, rd), axis=-1))
+    )"""
+
+    geometry_fn = hk.transform(
+        lambda x: FlexibleNeRFModel(geometric_init=False)(
+            x, None, mode=NeRFModelMode.GEOMETRY
+        )
+    )
+    appearance_fn = hk.transform(
+        lambda x, view: FlexibleNeRFModel(geometric_init=False)(
+            x, view, mode=NeRFModelMode.APPEARANCE
+        )
     )
 
     geometry_params = geometry_fn.init(
@@ -124,9 +135,8 @@ def train_sdrf(config):
 
     sdrf, sdrf_params = init_networks(config.sdrf.model, subrng)
     with open("experiment/sphere_nerf.pkl", "rb") as pkl:
-        sdrf_params = SDRFParams(
-            geometry=pickle.load(pkl), appearance=sdrf_params.appearance
-        )
+        g_a_params = pickle.load(pkl)
+        sdrf_params = SDRFParams(geometry=g_a_params, appearance=g_a_params)
 
     basedir = config.dataset.basedir
     print(f"Loading images/poses from {basedir}...")
@@ -255,9 +265,10 @@ def train_sdrf(config):
         return rgb.reshape(H, W, 3), depth.reshape(H, W, 1)
 
     value_and_grad_fn = jit(value_and_grad(loss_fn, argnums=(1,), has_aux=True))
-    reap_fn = jit(
-        core.reap(value_and_grad(loss_fn, argnums=(1,), has_aux=True), tag="vjp")
-    )
+    if config.sdrf.render.oryx_debug:
+        reap_fn = jit(
+            core.reap(value_and_grad(loss_fn, argnums=(1,), has_aux=True), tag="vjp")
+        )
     sdf_jit_fn = jit(lambda pts, ps: vmap(lambda pt: sdrf.geometry(pt, ps))(pts))
 
     height, width = intrinsics["val"].height, intrinsics["val"].width

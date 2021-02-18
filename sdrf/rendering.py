@@ -393,8 +393,9 @@ def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, options):
 
     # fetch the sdf values if requested
     debug_attribs = [depths] if options.isosurfaces_debug else []
-    rd = core.sow(rd, name="rd", tag="vjp", mode="append")
-    uv = core.sow(uv, name="uv", tag="vjp", mode="append")
+    if options.oryx_debug:
+        rd = core.sow(rd, name="rd", tag="vjp", mode="append")
+        uv = core.sow(uv, name="uv", tag="vjp", mode="append")
 
     output = (
         list(

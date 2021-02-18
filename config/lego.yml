@@ -79,9 +79,9 @@ sdrf:
     num_samples: 8
     truncation_distance: 1.0
     additive: True
-    chunksize: 16192
+    chunksize: 8192
     isosurfaces_debug: False
-    oryx_debug: True
+    oryx_debug: False
   model:
     geometry:
       num_layers: 4
@@ -94,6 +94,6 @@ sdrf:
       outermost_linear: False
       activation: relu
     optimizer:
-      initial_lr: 3.0E-4
+      initial_lr: 1.0E-4
       lr_decay: 250
       lr_decay_factor: 0.1

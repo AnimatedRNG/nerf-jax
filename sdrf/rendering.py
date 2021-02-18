@@ -65,10 +65,9 @@ class StratifiedSampler(object):
 
     def sample(self, rng, num_samples):
         partition_size = (2 * self.support) / num_samples
-        return jnp.linspace(
-            -self.support, self.support, num_samples
-        ) + jax.random.uniform(
-            rng, (num_samples,), minval=-partition_size / 2, maxval=partition_size / 2
+        return (
+            jnp.linspace(-self.support, self.support, num_samples)
+            + jax.random.normal(rng, (num_samples,)) * (partition_size * 0.2)
         )
 
     def pdf(self, x):

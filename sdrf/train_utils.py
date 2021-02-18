@@ -37,7 +37,7 @@ def manifold_loss(sdf, pts, sdf_params):
 
 
 def run_one_iter_of_sdrf(
-        model, params, uv, ray_origins, ray_directions, iteration, options, rng
+    model, params, uv, ray_origins, ray_directions, iteration, options, rng
 ):
     # reshape ro/rd
     ro = ray_origins.reshape((-1, 3))

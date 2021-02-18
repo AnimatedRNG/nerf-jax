@@ -64,14 +64,14 @@ class StratifiedSampler(object):
         self.support = support
 
     def sample(self, rng, num_samples):
-        partition_size = (2 * self.support) / num_samples
+        partition_size = self.support / num_samples
         return (
             jnp.linspace(-self.support, self.support, num_samples)
             + jax.random.normal(rng, (num_samples,)) * (partition_size * 0.2)
         )
 
     def pdf(self, x):
-        return 1.0 / (self.support * 2)
+        return 1.0 / self.support
 
 
 def find_intersections(sampler, sdf, ro, rd, params, rng, options):

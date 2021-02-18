@@ -59,6 +59,7 @@ def run_one_iter_of_sdrf(
         iteration / num_decay_steps
     )
     phi = lambda dist: gaussian_pdf(jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, sigma)
+    #phi = lambda dist: gaussian_pdf(dist, 0.0, sigma)
 
     render_fn = lambda uv, ro, rd, rng: render(
         sampler,

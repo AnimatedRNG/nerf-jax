@@ -64,16 +64,16 @@ sdrf:
     scale: 4.0
     num_samples: 2048
   sampler:
-    kind: "linear"
+    kind: "stratified"
     linear:
       support: 5.0E-2
     stratified:
-      support: 5.0E-2
+      support: 1.0E-1
     gaussian:
       sigma: 5.0E-2
   render:
     phi:
-      initial_sigma: 5.0E-2
+      initial_sigma: 1.0E-1
       lr_decay: 250
       lr_decay_factor: 0.1
     num_samples: 8

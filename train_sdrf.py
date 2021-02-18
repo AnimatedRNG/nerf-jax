@@ -248,7 +248,8 @@ def train_sdrf(config):
             H,
             W,
             focal,
-            poses["val"][0][:3, :4].astype(np.float32),
+            #poses["val"][0][:3, :4].astype(np.float32),
+            poses["val"][image_id][:3, :4].astype(np.float32),
         )
 
         rgb, depth = run_one_iter_of_sdrf(
@@ -302,6 +303,7 @@ def train_sdrf(config):
 
             start = time.time()
             rgb, depth = validation(subrng, params, 0, i)
+            #rgb, depth = validation(subrng, params, train_image_seq[i], i)
             end = time.time()
 
             to_img = lambda x: np.array(
@@ -311,6 +313,7 @@ def train_sdrf(config):
             writer.add_image("validation/rgb", to_img(rgb), i)
             writer.add_image("validation/depth", to_img(depth / depth.max()), i)
             writer.add_image("validation/target", to_img(images["val"][0]))
+            #writer.add_image("validation/target", to_img(images["val"][train_image_seq[i]]), i)
 
             print(f"Time to render {width}x{height} image: {(end - start)}")
 

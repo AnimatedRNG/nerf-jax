@@ -6,17 +6,10 @@ import io
 import argparse
 from collections import defaultdict
 
+import numpy as np
 import tensorboard.compat.proto.event_pb2 as event_pb2
 import imageio
-
-
-# adapted from https://github.com/lanpa/tensorboard-dumper/blob/554c23270fdd68bc91677946d40e5b29ce459dda/dump.py
-def read_pb2(data):
-    header = struct.unpack("Q", data[:8])
-
-    event_str = data[12 : 12 + int(header[0])]  # 8+4
-    data = data[12 + int(header[0]) + 4 :]
-    return data, event_str
+from tqdm import tqdm
 
 
 def extract_images(event, args, imgs):
@@ -37,9 +30,31 @@ def encode(imgs, output_folder, fps):
         writer = imageio.get_writer(out_path, fps=fps)
 
         steps = sorted(list(img_dict.keys()))
-        for step in steps:
+        for step in tqdm(steps):
             writer.append_data(img_dict[step])
         writer.close()
+
+
+# loosely-adapted from https://github.com/lanpa/tensorboard-dumper/blob/554c23270fdd68bc91677946d40e5b29ce459dda/dump.py
+# this works surprisingly well even without JIT-compilation!
+def get_event_strs(data):
+    offset = 0
+
+    events_str = []
+
+    while offset < len(data):
+        header = 0
+        for ci in range(8):
+            c = data[offset + 7 - ci]
+            header <<= 8
+            header |= c
+
+        event_str = data[offset + 12 : offset + 12 + header]  # 8+4
+        offset += 12 + header + 4
+
+        events_str.append(event_str)
+    return events_str
+
 
 def main(args):
     try:
@@ -58,8 +73,9 @@ def main(args):
 
     imgs = defaultdict(dict)
 
-    while data:
-        data, event_str = read_pb2(data)
+    event_strs = get_event_strs(data)
+
+    for event_str in event_strs:
         event = event_pb2.Event()
 
         event.ParseFromString(event_str)

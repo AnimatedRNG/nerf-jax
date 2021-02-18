@@ -64,14 +64,26 @@ class StratifiedSampler(object):
         self.support = support
 
     def sample(self, rng, num_samples):
-        partition_size = self.support / num_samples
-        return (
-            jnp.linspace(-self.support, self.support, num_samples)
-            + jax.random.normal(rng, (num_samples,)) * (partition_size * 0.2)
+        partition_size = (self.support * 2.0) / num_samples
+
+        '''samples = jnp.zeros(num_samples + 1)
+        linear = jnp.linspace(
+            -self.support, self.support, num_samples
+        ) + jax.random.normal(rng, (num_samples,)) * (partition_size * 0.2)
+        samples = index_update(
+            samples, index[: num_samples // 2], linear[: num_samples // 2]
         )
+        samples = index_update(
+            samples, index[num_samples // 2 + 1 :], linear[num_samples // 2 :]
+        )
+        return samples'''
+
+        return jnp.linspace(
+            -self.support, self.support, num_samples
+        ) + jax.random.normal(rng, (num_samples,)) * (partition_size * 0.2)
 
     def pdf(self, x):
-        return 1.0 / self.support
+        return 1.0 / (self.support * 2.0)
 
 
 def find_intersections(sampler, sdf, ro, rd, params, rng, options):

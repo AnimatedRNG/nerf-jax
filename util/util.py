@@ -1,4 +1,6 @@
+import operator
 import functools
+from itertools import accumulate
 from collections import namedtuple
 
 import numpy as np
@@ -6,7 +8,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 from jax.ops import index, index_update
-from jax.tree_util import register_pytree_node
+from jax.tree_util import register_pytree_node, tree_map
 from box import Box
 
 
@@ -51,6 +53,7 @@ def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
 
     return uv, ray_origins, ray_directions
 
+
 def get_fan(shape):
     if len(shape) < 1:
         fan_in = fan_out = 1
@@ -62,6 +65,47 @@ def get_fan(shape):
         raise Exception("invalid shape for SIREN!")
 
     return fan_in, fan_out
+
+
+def map_batched_tuple(tensors, f, chunksize, use_vmap, rng=None):
+    """
+    Calls map_batched/map_batched_rng on lists/tuple of tensors that share a
+    leading dimension
+    """
+    shapes = tuple(tensor.shape[1:] for tensor in tensors)
+    lens = tuple(sum(shape) for shape in shapes)
+    offsets = (0,) + tuple(accumulate(lens))
+
+    reshaped = tuple(tensor.reshape(tensor.shape[0], -1) for tensor in tensors)
+    if rng is None:
+        return map_batched(
+            jnp.concatenate(reshaped, axis=1),
+            lambda chunk_args: f(
+                *tuple(
+                    chunk_args[offsets[i] : offsets[i + 1]].reshape(shapes[i])
+                    for i in range(len(offsets) - 1)
+                )
+            ),
+            chunksize,
+            use_vmap,
+        )
+    else:
+        return map_batched_rng(
+            jnp.concatenate(reshaped, axis=1),
+            lambda mixed_args: f(
+                *(
+                    tuple(
+                        mixed_args[0][offsets[i] : offsets[i + 1]].reshape(shapes[i])
+                        for i in range(len(offsets) - 1)
+                    )
+                    + (mixed_args[1],)
+                )
+            ),
+            chunksize,
+            use_vmap,
+            rng,
+        )
+
 
 # @functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched(tensor, f, chunksize, use_vmap):
@@ -89,6 +133,7 @@ def map_batched(tensor, f, chunksize, use_vmap):
         return out
 
 
+# TODO: This is awful, please rewrite it
 # @functools.partial(jit, static_argnums=(1, 2, 3))
 def map_batched_rng(tensor, f, chunksize, use_vmap, rng):
     if tensor.shape[0] < chunksize:

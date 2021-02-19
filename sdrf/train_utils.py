@@ -15,8 +15,9 @@ from .rendering import (
     ExponentialSampler,
     gaussian_pdf,
     render,
+    find_intersections,
 )
-from util import map_batched_rng
+from util import map_batched_tuple, map_batched_rng
 
 
 def eikonal_loss(sdf, pts, sdf_params):
@@ -44,15 +45,15 @@ def run_one_iter_of_sdrf(
     rd = ray_directions.reshape((-1, 3))
 
     if options.sampler.kind == "linear":
-        #sampler = LinearSampler(options.sampler.linear.support)
+        # sampler = LinearSampler(options.sampler.linear.support)
         sampler = LinearSampler()
     elif options.sampler.kind == "stratified":
-        #sampler = StratifiedSampler(options.sampler.stratified.support)
+        # sampler = StratifiedSampler(options.sampler.stratified.support)
         sampler = StratifiedSampler()
     elif options.sampler.kind == "exponential":
         sampler = ExponentialSampler()
     elif options.sampler.kind == "gaussian":
-        #sampler = GaussianSampler(options.sampler.gaussian.sigma)
+        # sampler = GaussianSampler(options.sampler.gaussian.sigma)
         sampler = GaussianSampler()
     else:
         raise Exception("Invalid sampler type")
@@ -61,34 +62,46 @@ def run_one_iter_of_sdrf(
     sigma = options.render.phi.initial_sigma * options.render.phi.lr_decay_factor ** (
         iteration / num_decay_steps
     )
-    phi = lambda dist, s: gaussian_pdf(
-        jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, s
-    )
-    #phi = lambda dist, s: gaussian_pdf(dist, 0.0, s)
+    phi = lambda dist, s: gaussian_pdf(jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, s)
+    # phi = lambda dist, s: gaussian_pdf(dist, 0.0, s)
 
-    render_fn = lambda uv, ro, rd, rng: render(
-        sampler,
+    render_fn = lambda uv, ro, rd, xs, depths: render(
         model.geometry,
         model.appearance,
         uv,
         ro,
         rd,
+        xs,
+        depths,
         params,
-        rng,
         phi,
         sigma,
         options.render,
     )
 
-    outputs, rng = map_batched_rng(
-        jnp.stack((uv, ro, rd), axis=-1),
-        lambda chunk_rng: render_fn(
-            chunk_rng[0][:, 0], chunk_rng[0][:, 1], chunk_rng[0][:, 2], chunk_rng[1]
+    intersections, _ = map_batched_tuple(
+        (ro, rd),
+        lambda ro_, rd_, subrng_: find_intersections(
+            sampler,
+            model.geometry,
+            ro_,
+            rd_,
+            params,
+            subrng_,
+            sigma,
+            options.render,
         ),
         options.render.chunksize,
         True,
         rng,
     )
-    # outputs = vmap(lambda ro, rd: render_fn(ro, rd, rng))(ro, rd)
+    xs, depths = intersections
+
+    outputs = map_batched_tuple(
+        (uv, ro, rd, xs, depths),
+        render_fn,
+        options.render.chunksize,
+        True,
+    )
 
     return outputs

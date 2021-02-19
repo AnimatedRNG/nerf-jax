@@ -358,12 +358,10 @@ def masked_sdf_rev(sdf, res, g):
     return (None, *grads_input)
 
 
-def render(sampler, sdf, appearance, uv, ro, rd, params, rng, phi, sigma, options):
+def render(sdf, appearance, uv, ro, rd, xs, depths, params, phi, sigma, options):
     if options.oryx_debug:
         import oryx
         import oryx.core as core
-
-    xs, depths = find_intersections(sampler, sdf, ro, rd, params, rng, sigma, options)
 
     pts = vmap(lambda depth: ro + rd * depth)(depths)
 

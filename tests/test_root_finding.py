@@ -86,7 +86,13 @@ def test_depth_accumulation():
         xs = jnp.linspace(-1e-2, 1e-2, num_iters)
         pts = vmap(
             lambda iso: sphere_trace(
-                create_sphere, ro, rd, iso, truncation_dist, origin, radius,
+                create_sphere,
+                ro,
+                rd,
+                iso,
+                truncation_dist,
+                origin,
+                radius,
             )
         )(xs)
         valid = vmap(lambda pt: jnp.abs(create_sphere(pt, origin, radius)) < 1e-2)(pts)

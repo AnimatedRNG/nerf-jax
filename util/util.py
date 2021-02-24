@@ -76,13 +76,19 @@ def map_batched_tuple(tensors, f, chunksize, use_vmap, rng=None):
     lens = tuple(sum(shape) for shape in shapes)
     offsets = (0,) + tuple(accumulate(lens))
 
+    reshape_arg = (
+        lambda arg, i: arg[offsets[i] : offsets[i + 1]].reshape(shapes[i])
+        if use_vmap
+        else arg[:, offsets[i] : offsets[i + 1]].reshape(arg.shape[:1] + shapes[i])
+    )
+
     reshaped = tuple(tensor.reshape(tensor.shape[0], -1) for tensor in tensors)
     if rng is None:
         return map_batched(
             jnp.concatenate(reshaped, axis=1),
             lambda chunk_args: f(
                 *tuple(
-                    chunk_args[offsets[i] : offsets[i + 1]].reshape(shapes[i])
+                    reshape_arg(chunk_args, i)
                     for i in range(len(offsets) - 1)
                 )
             ),
@@ -95,7 +101,7 @@ def map_batched_tuple(tensors, f, chunksize, use_vmap, rng=None):
             lambda mixed_args: f(
                 *(
                     tuple(
-                        mixed_args[0][offsets[i] : offsets[i + 1]].reshape(shapes[i])
+                        reshape_arg(mixed_args[0], i)
                         for i in range(len(offsets) - 1)
                     )
                     + (mixed_args[1],)
@@ -142,7 +148,9 @@ def map_batched_rng(tensor, f, chunksize, use_vmap, rng):
             rng, subrng = rngs[0], rngs[1:]
             return vmap(f)((tensor, subrng)), rng
         else:
-            rng, subrng = jax.random.split(rng)
+            # rng, subrng = jax.random.split(rng)
+            rngs = jax.random.split(rng, tensor.shape[0] + 1)
+            rng, subrng = rngs[0], rngs[1:]
             return f((tensor, subrng)), rng
     else:
         tensor_diff = -tensor.shape[0] % chunksize
@@ -163,8 +171,11 @@ def map_batched_rng(tensor, f, chunksize, use_vmap, rng):
                 lambda chunk: vmap(f)((chunk[0], chunk[1])), (tensor, subrng)
             )
         else:
-            rng, *subrng = jax.random.split(rng, tensor_len // chunksize + 1)
-            subrng = jnp.stack(subrng)
+            rngs = jax.random.split(rng, tensor.shape[0] * tensor.shape[1] + 1)
+            rng, subrng = rngs[0], rngs[1:]
+            subrng = jax.random.split(rng, tensor.shape[0] * tensor.shape[1]).reshape(
+                *tensor.shape[:2], 2
+            )
 
             out = jax.lax.map(f, (tensor, subrng))
 

@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap, grad
 
-from sdrf import sphere_trace_naive, sphere_trace
+from sdrf import sphere_trace_naive, sphere_trace, sphere_trace_batched
 
 
 def create_sphere(pt, origin=jnp.array([0.0, 0.0, 0.0]), radius=2.0):
@@ -72,6 +72,67 @@ def test_sphere_trace_iso():
     # in general, won't re-jit on different isosurface values
     for i in range(5):
         perform_radius_test(fn(i / 5.0), 2.0, 3.0)
+
+
+def test_sphere_trace_batched():
+    ro = jnp.array([-4.0, 0.0, -1.0])
+    rd = jnp.array([1.0, 0.0, 0.0])
+    truncation_dist = 1.0
+
+    iso, origin, radius = (
+        jnp.array(0.0),
+        jnp.array([0.0, 0.0, 0.0]),
+        jnp.array(2.0),
+    )
+
+    create_permutations = lambda a, n, add_noise=True: jnp.repeat(
+        jnp.expand_dims(a, axis=0), n, axis=0
+    ) + (
+        np.random.random((n,) + a.shape) * 1e-2
+        if add_noise
+        else np.zeros((n,) + a.shape)
+    )
+
+    sphere_trace_fn = lambda ro_, rd_, iso_: sphere_trace(
+        create_sphere, ro_, rd_, iso_, truncation_dist, origin, radius
+    )
+
+    sphere_trace_batched_fn = lambda ro_, rd_, iso_: sphere_trace_batched(
+        create_sphere,
+        ro_,
+        rd_,
+        iso_,
+        truncation_dist,
+        origin,
+        radius,
+    )
+
+    ro_perm, rd_perm, iso_perm = (
+        create_permutations(ro, 10, False),
+        create_permutations(rd, 10, False),
+        create_permutations(iso, 10, True),
+    )
+    assert jnp.allclose(
+        vmap(sphere_trace_fn)(ro_perm, rd_perm, iso_perm),
+        sphere_trace_batched_fn(ro_perm, rd_perm, iso_perm),
+    )
+
+    loss_fn_trace = lambda ro, rd, iso: jnp.sum(
+        vmap(
+            lambda ro_i, rd_i, iso_i: jnp.linalg.norm(
+                sphere_trace_fn(ro_i, rd_i, iso_i)
+            )
+        )(ro, rd, iso)
+    )
+
+    loss_fn_batched = lambda ro, rd, iso: jnp.sum(
+        vmap(lambda a_i: jnp.linalg.norm(a_i))(sphere_trace_batched_fn(ro, rd, iso))
+    )
+
+    assert jnp.allclose(
+        grad(loss_fn_trace)(ro_perm, rd_perm, iso_perm),
+        grad(loss_fn_batched)(ro_perm, rd_perm, iso_perm),
+    )
 
 
 def test_depth_accumulation():

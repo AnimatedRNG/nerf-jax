@@ -66,7 +66,8 @@ def dvmap(fn, n, *vectorized_args, num_segments=10, **other_args):
 
 def reorder_pytree(xs, indices):
     return jax.tree_util.tree_map(
-        lambda leaf_xs: jax.ops.index_update(leaf_xs, indices, leaf_xs), xs
+        #lambda leaf_xs: leaf_xs[indices, ...], xs
+        lambda leaf_xs: jnp.take(leaf_xs, indices, axis=0), xs
     )
 
 
@@ -74,10 +75,12 @@ def dvmap_while(cond, body, xs, max_iters=30, num_segments=10, use_dvmap=True):
     tensor_shape = jax.tree_util.tree_flatten(xs)[0][0].shape
     max_length = tensor_shape[0]
 
+    #print([xs.shape for x in xs])
+
     initial_uvs = jnp.arange(max_length, dtype=jnp.uint32)
     original_uvs = jnp.array(initial_uvs)
 
-    def body_fn(_, carry):
+    def for_body_fn(_, carry):
         initial_xs, uvs = carry
 
         # Every value is True if we want to keep iterating and False otherwise
@@ -90,10 +93,10 @@ def dvmap_while(cond, body, xs, max_iters=30, num_segments=10, use_dvmap=True):
         indices = jnp.argsort(~mask)
 
         # re-order the input accordingly
-        staging_xs = reorder_pytree((initial_xs), indices)
+        staging_xs = reorder_pytree(initial_xs, indices)
 
         # and do the same thing for the uvs
-        uvs = reorder_pytree(uvs, indices)
+        staging_uvs = reorder_pytree(uvs, indices)
 
         num_valid = mask.sum()
 
@@ -107,14 +110,16 @@ def dvmap_while(cond, body, xs, max_iters=30, num_segments=10, use_dvmap=True):
             lambda a_t, b_t: jax.lax.select(mi < num_valid, a_t, b_t), a, b
         )
 
-        initial_xs = vmap(
+        combined_xs = vmap(
             lambda output_xs_i, staging_xs_i, mi: tree_select(
                 output_xs_i, staging_xs_i, mi
             )
         )(output_xs, staging_xs, original_uvs)
 
-        return initial_xs, uvs
+        return combined_xs, staging_uvs
 
-    final_xs, final_uvs = jax.lax.fori_loop(0, max_iters, body_fn, (xs, initial_uvs))
+    final_xs, final_uvs = jax.lax.fori_loop(
+        0, max_iters, for_body_fn, (xs, initial_uvs)
+    )
 
-    return reorder_pytree(final_xs, final_uvs)
+    return reorder_pytree(final_xs, jnp.argsort(final_uvs))

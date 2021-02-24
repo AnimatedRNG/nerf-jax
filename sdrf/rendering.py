@@ -12,7 +12,7 @@ from jax.tree_util import register_pytree_node, tree_map
 from jax.experimental.host_callback import id_tap, id_print
 
 from util import map_batched_rng
-from .root_finding import sphere_trace, sphere_trace_depth
+from .root_finding import sphere_trace, sphere_trace_depth, sphere_trace_depth_batched
 
 
 def gaussian_pdf(x, mu, sigma):
@@ -94,6 +94,23 @@ def find_intersections(sampler, sdf, ro, rd, params, rng, sigma, options):
 
     depths = vmap(intersect)(xs)
     depths = jnp.reshape(depths, (-1, 1))
+
+    return xs, depths
+
+
+def find_intersections_batched(sampler, sdf, ro, rd, params, rng, sigma, options):
+    xs = vmap(lambda rng_i: sampler.sample(rng_i, options.num_samples, sigma))(rng)
+    """intersect = lambda iso: sphere_trace_depth(
+        sdf, ro, rd, iso, options.truncation_distance, params.geometry
+    )"""
+    intersect = lambda x: sphere_trace_depth_batched(
+        sdf, ro, rd, x, options.truncation_distance, params.geometry
+    )
+
+    # this is inefficient, but it works I guess
+    depths = jax.lax.map(intersect, jnp.transpose(xs, axes=(1, 0)))
+    depths = jnp.transpose(depths, (1, 0))
+    depths = depths[..., jnp.newaxis]
 
     return xs, depths
 

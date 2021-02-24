@@ -34,6 +34,7 @@ def test_dvmap_equality():
 
 
 def test_dvmap_while_sqrt():
+    np.random.seed(1)
     # the index parameter is unnecessary, we just have it so that
     # the standard JAX while loop will terminate after 100 iterations
     # if it doesn't find anything
@@ -45,7 +46,8 @@ def test_dvmap_while_sqrt():
         x, x_prev, a, i = carry
         return 0.5 * (x + a / x), x, a, i + 1
 
-    elems = np.random.random(2 ** 10) * 100
+    #elems = np.random.random(2 ** 10) * 100
+    elems = np.random.random(10) * 100
 
     carry_0 = (elems, elems, elems, jnp.zeros_like(elems, dtype=jnp.uint32))
     x_1 = vmap(example_body)(carry_0)
@@ -62,3 +64,21 @@ def test_dvmap_while_sqrt():
 
     assert jnp.allclose(sqrt_results, ref_results, rtol=1e-2)
     assert jnp.allclose(sqrt_results, true_answer, rtol=1e-2)
+
+
+def test_dvmap_even_simpler():
+    def really_simple_cond(carry):
+        return carry > 30
+
+    def really_simple_body(carry):
+        return carry - 1
+
+    elems = np.arange(100)
+    expected = jnp.concatenate(
+        [jnp.arange(31), jnp.ones(69, dtype=elems.dtype) * 30], axis=0
+    )
+
+    jit_dvmap_while = jax.jit(dvmap_while, static_argnums=(0, 1, 3))
+    assert all(
+        expected == jit_dvmap_while(really_simple_cond, really_simple_body, elems, 100)
+    )

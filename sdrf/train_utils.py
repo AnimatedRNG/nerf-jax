@@ -16,6 +16,7 @@ from .rendering import (
     gaussian_pdf,
     render,
     find_intersections,
+    find_intersections_batched,
 )
 from util import map_batched_tuple, map_batched_rng
 
@@ -95,7 +96,24 @@ def run_one_iter_of_sdrf(
         True,
         rng,
     )
+    '''intersections, _ = map_batched_tuple(
+        (ro, rd),
+        lambda ro_, rd_, subrng_: find_intersections_batched(
+            sampler,
+            model.geometry,
+            ro_,
+            rd_,
+            params,
+            subrng_,
+            sigma,
+            options.render,
+        ),
+        options.render.chunksize,
+        False,
+        rng,
+    )'''
     xs, depths = intersections
+    print(uv.shape, ro.shape, rd.shape, xs.shape, depths.shape)
 
     outputs = map_batched_tuple(
         (uv, ro, rd, xs, depths),

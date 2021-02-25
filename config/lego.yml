@@ -12,7 +12,7 @@ dataset:
     downscale: 2
     white_background: False
   sampler:
-    num_random_rays: 4096
+    num_random_rays: 4096 # 4096
   projection:
     no_ndc: True
     near: 2
@@ -64,9 +64,9 @@ sdrf:
     scale: 4.0
     num_samples: 2048
   sampler:
-    kind: "gaussian"
+    kind: "linear"
     linear:
-      support: 5.0E-2
+      support: 1.0E-1
     stratified:
       support: 1.0E-1
     gaussian:
@@ -76,25 +76,19 @@ sdrf:
       initial_sigma: 1.0E-1
       #lr_decay: 250
       lr_decay: 2
-      lr_decay_factor: 0.2
+      lr_decay_factor: 0.1
     num_samples: 8
-    truncation_distance: 1.0
+    truncation_distance: 10.0
     additive: True
-    chunksize: 8192
+    chunksize: 32768 # 4096
     isosurfaces_debug: False
     oryx_debug: False
   model:
-    geometry:
-      num_layers: 4
-      hidden_size: 32
-      outermost_linear: False
-      activation: relu
-    appearance:
-      num_layers: 2
+    network:
+      num_layers: 8
       hidden_size: 128
-      outermost_linear: False
-      activation: relu
+      skip_connect_every: 3
     optimizer:
       initial_lr: 1.0E-4
-      lr_decay: 2
+      lr_decay: 10
       lr_decay_factor: 0.1

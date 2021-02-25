@@ -67,7 +67,7 @@ def sphere_trace_depth_batched(sdf, ro, rd, iso, truncation, *params):
             iso,
         ),
         max_iters=30,
-        num_segments=2,
+        num_segments=50,
         use_dvmap=True
     )
 

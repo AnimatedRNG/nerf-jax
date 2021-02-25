@@ -37,36 +37,21 @@ register_pytree_node(Losses, lambda xs: (tuple(xs), None), lambda _, xs: Losses(
 
 
 def init_networks(config, rng):
-    """geometry_fn = hk.transform(
-        lambda x: Siren(
-            3,
-            1,
-            config.geometry.num_layers,
-            config.geometry.hidden_size,
-            config.geometry.outermost_linear,
-            config.geometry.activation,
-        )(x)
-    )
-    appearance_fn = hk.transform(
-        lambda pt, rd: Siren(
-            6,
-            3,
-            config.geometry.num_layers,
-            config.geometry.hidden_size,
-            config.geometry.outermost_linear,
-            config.geometry.activation,
-        )(jnp.concatenate((pt, rd), axis=-1))
-    )"""
-
     geometry_fn = hk.transform(
-        lambda x: FlexibleNeRFModel(geometric_init=False)(
-            x, None, mode=NeRFModelMode.GEOMETRY
-        )
+        lambda x: FlexibleNeRFModel(
+            num_layers=config.network.num_layers,
+            hidden_size=config.network.hidden_size,
+            skip_connect_every=config.network.skip_connect_every,
+            geometric_init=False,
+        )(x, None, mode=NeRFModelMode.GEOMETRY)
     )
     appearance_fn = hk.transform(
-        lambda x, view: FlexibleNeRFModel(geometric_init=False)(
-            x, view, mode=NeRFModelMode.APPEARANCE
-        )
+        lambda x, view: FlexibleNeRFModel(
+            num_layers=config.network.num_layers,
+            hidden_size=config.network.hidden_size,
+            skip_connect_every=config.network.skip_connect_every,
+            geometric_init=False,
+        )(x, view, mode=NeRFModelMode.APPEARANCE)
     )
 
     geometry_params = geometry_fn.init(
@@ -182,7 +167,7 @@ def train_sdrf(config):
             config.dataset.sampler,
         )
 
-        '''(uv, ray_origins, ray_directions), target_s = (
+        """(uv, ray_origins, ray_directions), target_s = (
             get_ray_bundle(
                 intrinsics["train"].height,
                 intrinsics["train"].width,
@@ -190,7 +175,7 @@ def train_sdrf(config):
                 poses["train"][image_id][:3, :4],
             ),
             images["train"][image_id],
-        )'''
+        )"""
         ray_origins, ray_directions, target_s = (
             ray_origins.reshape(1, -1, 3),
             ray_directions.reshape(1, -1, 3),
@@ -231,7 +216,7 @@ def train_sdrf(config):
         losses = Losses(rgb_loss=rgb_loss, eikonal_loss=e_loss, manifold_loss=m_loss)
 
         # loss_weights = jnp.array([3e3, 5e1, 1e2])
-        #loss_weights = jnp.array([3e3, 1e-9, 1e-9])
+        # loss_weights = jnp.array([3e3, 1e-9, 1e-9])
         # loss_weights = jnp.array([3e3, 1e2, 1e2])
         loss_weights = jnp.array([3e3, 1e2, 1e-9])
 
@@ -249,7 +234,7 @@ def train_sdrf(config):
             H,
             W,
             focal,
-            #poses["val"][0][:3, :4].astype(np.float32),
+            # poses["val"][0][:3, :4].astype(np.float32),
             poses["val"][image_id][:3, :4].astype(np.float32),
         )
 
@@ -304,7 +289,7 @@ def train_sdrf(config):
 
             start = time.time()
             rgb, depth = validation(subrng, params, 0, i)
-            #rgb, depth = validation(subrng, params, train_image_seq[i], i)
+            # rgb, depth = validation(subrng, params, train_image_seq[i], i)
             end = time.time()
 
             to_img = lambda x: np.array(
@@ -314,7 +299,7 @@ def train_sdrf(config):
             writer.add_image("validation/rgb", to_img(rgb), i)
             writer.add_image("validation/depth", to_img(depth / depth.max()), i)
             writer.add_image("validation/target", to_img(images["val"][0]))
-            #writer.add_image("validation/target", to_img(images["val"][train_image_seq[i]]), i)
+            # writer.add_image("validation/target", to_img(images["val"][train_image_seq[i]]), i)
 
             print(f"Time to render {width}x{height} image: {(end - start)}")
 

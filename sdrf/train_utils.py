@@ -80,7 +80,7 @@ def run_one_iter_of_sdrf(
         options.render,
     )
 
-    intersections, _ = map_batched_tuple(
+    '''intersections, _ = map_batched_tuple(
         (ro, rd),
         lambda ro_, rd_, subrng_: find_intersections(
             sampler,
@@ -95,8 +95,8 @@ def run_one_iter_of_sdrf(
         options.render.chunksize,
         True,
         rng,
-    )
-    '''intersections, _ = map_batched_tuple(
+    )'''
+    intersections, _ = map_batched_tuple(
         (ro, rd),
         lambda ro_, rd_, subrng_: find_intersections_batched(
             sampler,
@@ -111,9 +111,8 @@ def run_one_iter_of_sdrf(
         options.render.chunksize,
         False,
         rng,
-    )'''
+    )
     xs, depths = intersections
-    print(uv.shape, ro.shape, rd.shape, xs.shape, depths.shape)
 
     outputs = map_batched_tuple(
         (uv, ro, rd, xs, depths),

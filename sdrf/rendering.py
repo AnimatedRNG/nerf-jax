@@ -49,13 +49,13 @@ class ExponentialSampler(object):
 
 
 class LinearSampler(object):
-    def __init__(self, support):
-        self.support = support
+    def __init__(self):
+        pass
 
-    def sample(self, rng, num_samples):
-        return jnp.linspace(-self.support, self.support, num_samples)
+    def sample(self, rng, num_samples, support):
+        return jnp.linspace(-support, support, num_samples)
 
-    def pdf(self, x):
+    def pdf(self, x, support):
         return 1.0 / (self.support * 2)
 
 
@@ -100,15 +100,13 @@ def find_intersections(sampler, sdf, ro, rd, params, rng, sigma, options):
 
 def find_intersections_batched(sampler, sdf, ro, rd, params, rng, sigma, options):
     xs = vmap(lambda rng_i: sampler.sample(rng_i, options.num_samples, sigma))(rng)
-    """intersect = lambda iso: sphere_trace_depth(
-        sdf, ro, rd, iso, options.truncation_distance, params.geometry
-    )"""
     intersect = lambda x: sphere_trace_depth_batched(
         sdf, ro, rd, x, options.truncation_distance, params.geometry
     )
 
     # this is inefficient, but it works I guess
     depths = jax.lax.map(intersect, jnp.transpose(xs, axes=(1, 0)))
+    #depths = vmap(intersect)(jnp.transpose(xs, axes=(1, 0)))
     depths = jnp.transpose(depths, (1, 0))
     depths = depths[..., jnp.newaxis]
 
@@ -324,6 +322,7 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         grad_phi_x = index_add(grad_phi_x, index[:-1], dosdphi)
 
     # unsort
+    inds = jnp.argsort(inds, axis=0)
     grad_depths = jnp.take_along_axis(grad_sorted_depths, inds, axis=0)
     grad_attribs = tuple(
         jnp.take_along_axis(grad_sorted_attrib, inds, axis=0)

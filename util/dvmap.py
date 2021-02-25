@@ -66,8 +66,9 @@ def dvmap(fn, n, *vectorized_args, num_segments=10, **other_args):
 
 def reorder_pytree(xs, indices):
     return jax.tree_util.tree_map(
-        #lambda leaf_xs: leaf_xs[indices, ...], xs
-        lambda leaf_xs: jnp.take(leaf_xs, indices, axis=0), xs
+        # lambda leaf_xs: leaf_xs[indices, ...], xs
+        lambda leaf_xs: jnp.take(leaf_xs, indices, axis=0),
+        xs,
     )
 
 
@@ -75,7 +76,7 @@ def dvmap_while(cond, body, xs, max_iters=30, num_segments=10, use_dvmap=True):
     tensor_shape = jax.tree_util.tree_flatten(xs)[0][0].shape
     max_length = tensor_shape[0]
 
-    #print([xs.shape for x in xs])
+    # print([xs.shape for x in xs])
 
     initial_uvs = jnp.arange(max_length, dtype=jnp.uint32)
     original_uvs = jnp.array(initial_uvs)

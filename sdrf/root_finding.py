@@ -43,14 +43,14 @@ def sphere_trace_depth_batched(sdf, ro, rd, iso, truncation, *params):
     def cond_fun(carry):
         dist, _, _, _, _, iso_i = carry
         abs_dist = scalarize(jnp.abs(dist - iso_i))
-        return (abs_dist < 1e10) & (abs_dist > 1e-3)
+        return (abs_dist < 5.0) & (abs_dist > 1e-3)
 
     def body_fun(carry):
         old_dist, old_depth, old_pt, rd_i, ro_i, iso_i = carry
         depth = scalarize((old_depth + old_dist))
         pt = depth * rd_i + ro_i
         dist = sdf(pt, *params) - iso_i
-        dist = jnp.minimum(jnp.abs(dist), truncation) * jnp.sign(dist)
+        #dist = jnp.minimum(jnp.abs(dist), truncation) * jnp.sign(dist)
         return (dist, depth, pt, rd_i, ro_i, iso_i)
 
     _, depth, _, _, _, _ = dvmap_while(
@@ -64,11 +64,12 @@ def sphere_trace_depth_batched(sdf, ro, rd, iso, truncation, *params):
             ro,
             rd,
             ro,
-            iso
+            iso,
         ),
-        max_iters=30
+        max_iters=30,
+        num_segments=2,
+        use_dvmap=True
     )
-    print(depth.shape)
 
     return depth
 
@@ -82,10 +83,31 @@ def sphere_trace_depth_batched_fwd(sdf, ro, rd, iso, truncation, *params):
 def sphere_trace_depth_batched_rev(sdf, res, g):
     # TODO: replace with dvmap masked version for even better performance?
     ro, rd, iso, truncation, depth, *params = res
-    rev_fn = lambda ro_i, rd_i, iso_i, depth_i, g_i: sphere_trace_depth_rev_paper(
-        sdf, (ro_i, rd_i, iso_i, truncation, depth_i, *params), g_i
+    # for some reason this doesn't work?
+    # rev_fn = lambda ro_i, rd_i, iso_i, depth_i, g_i: sphere_trace_depth_rev_paper(
+    #    sdf, (ro_i, rd_i, iso_i, truncation, depth_i, *params), g_i
+    # )
+    # return vmap(rev_fn)(ro, rd, iso, depth, g)
+
+    pts = vmap(lambda depth_i, rd_i, ro_i: depth_i * rd_i + ro_i)(depth, rd, ro)
+
+    vjp_p = vmap(lambda pt: grad(sdf, argnums=(0,))(pt, *params))
+
+    dps = vjp_p(pts)[0]
+
+    u = vmap(lambda dp_i, rd_i, g_i: (-1.0 / (dp_i @ rd_i.T)) * g_i)(dps, rd, g)
+
+    validity = vmap(lambda pt, iso_i: jnp.abs(sdf(pt, *params)) - iso_i < 1e-3)(
+        pts, iso
     )
-    return vmap(rev_fn)(ro, rd, iso, depth, g)
+
+    # batched_sdf = lambda pts, *params_: vmap(
+    #    lambda pt, v: jax.lax.select(v, sdf(pt, *params), 1e10)
+    # )(pts, validity)
+    batched_sdf = lambda pts, *params_: vmap(lambda pt: sdf(pt, *params))(pts)
+    _, vjp_params = vjp(functools.partial(batched_sdf, pts), *params)
+
+    return (None, None, None, None, *vjp_params(u))
 
 
 # @functools.partial(jit, static_argnums=(0,))
@@ -137,15 +159,15 @@ def sphere_trace_depth_rev_paper(sdf, res, g):
     _, vjp_params = vjp(functools.partial(sdf, pt), *params)
 
     # mask output by validity?
-    out_vjp_params = [
+    """out_vjp_params = [
         tree_map(
             lambda param: jax.lax.select(validity, param, jnp.zeros_like(param)),
             vjp_param,
         )
         for vjp_param in vjp_params(u)
-    ]
-    # return (None, None, None, None, *vjp_params(u))
-    return (None, None, None, None, *out_vjp_params)
+    ]"""
+    return (None, None, None, None, *vjp_params(u))
+    # return (None, None, None, None, *out_vjp_params)
 
 
 sphere_trace_depth.defvjp(sphere_trace_depth_fwd, sphere_trace_depth_rev_paper)

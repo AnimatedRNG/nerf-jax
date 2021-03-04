@@ -9,12 +9,13 @@ from jax.ops import index, index_update
 
 # @functools.partial(jit, static_argnums=(1,))
 def positional_encoding(tensor, num_encoding_functions):
-    frequency_bands = (
-        2.0
-        ** jnp.linspace(
-            0.0, num_encoding_functions - 1, num_encoding_functions, dtype=jnp.float32,
-        )[..., jnp.newaxis]
-    )
+    frequency_bands = 2.0 ** jnp.linspace(
+        0.0,
+        num_encoding_functions - 1,
+        #2 ** (num_encoding_functions - 1),
+        num_encoding_functions,
+        dtype=jnp.float32,
+    )[..., jnp.newaxis]
 
     encoding = jnp.zeros((num_encoding_functions, 2, tensor.shape[0]))
     ten_arr = tensor[jnp.newaxis, ...]
@@ -28,6 +29,7 @@ def positional_encoding(tensor, num_encoding_functions):
         return tensor
     else:
         return jnp.concatenate((tensor, encoding.flatten()))
+        #return encoding.flatten()
 
 
 # @jit

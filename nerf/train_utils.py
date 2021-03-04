@@ -32,11 +32,11 @@ def run_network(
     dim_xyz, dim_dir = embedded.shape[-1], embedded_dirs.shape[-1]
     embedded = jnp.concatenate((embedded, embedded_dirs), axis=-1)
 
-    #if options.use_viewdirs:
+    # if options.use_viewdirs:
     fused_fn = lambda x: jnp.concatenate(
         network_fn(x[..., :dim_xyz], x[..., dim_xyz:]), axis=-1
     )
-    #else:
+    # else:
     #    fused_fn = lambda x: jnp.concatenate(
     #        network_fn(x[..., :dim_xyz], None), axis=-1
     #    )

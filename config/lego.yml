@@ -64,9 +64,9 @@ sdrf:
     scale: 4.0
     num_samples: 2048
   sampler:
-    kind: "linear"
+    kind: "stratified"
     linear:
-      support: 1.0E-1
+      support: 5.0E-2
     stratified:
       support: 1.0E-1
     gaussian:
@@ -88,7 +88,9 @@ sdrf:
       num_layers: 8
       hidden_size: 128
       skip_connect_every: 3
+      num_encoding_fn_xyz: 6
+      num_encoding_fn_dir: 4
     optimizer:
-      initial_lr: 1.0E-4
+      initial_lr: 5.0E-4
       lr_decay: 10
       lr_decay_factor: 0.1

@@ -20,7 +20,7 @@ import haiku as hk
 from tensorboardX import SummaryWriter
 from tqdm import tqdm, trange
 
-from nerf import loader, sampler, FlexibleNeRFModel, NeRFModelMode
+from nerf import loader, positional_encoding, sampler, FlexibleNeRFModel, NeRFModelMode
 from util import get_ray_bundle, gradient_visualization, serialize_box
 from sdrf import (
     SDRFParams,
@@ -43,7 +43,12 @@ def init_networks(config, rng):
             hidden_size=config.network.hidden_size,
             skip_connect_every=config.network.skip_connect_every,
             geometric_init=False,
-        )(x, None, mode=NeRFModelMode.GEOMETRY)
+        )(
+            positional_encoding(x, config.network.num_encoding_fn_xyz),
+            #x,
+            None,
+            mode=NeRFModelMode.GEOMETRY,
+        )
     )
     appearance_fn = hk.transform(
         lambda x, view: FlexibleNeRFModel(
@@ -51,7 +56,13 @@ def init_networks(config, rng):
             hidden_size=config.network.hidden_size,
             skip_connect_every=config.network.skip_connect_every,
             geometric_init=False,
-        )(x, view, mode=NeRFModelMode.APPEARANCE)
+        )(
+            positional_encoding(x, config.network.num_encoding_fn_xyz),
+            positional_encoding(view, config.network.num_encoding_fn_dir),
+            #x,
+            #view,
+            mode=NeRFModelMode.APPEARANCE,
+        )
     )
 
     geometry_params = geometry_fn.init(
@@ -119,7 +130,8 @@ def train_sdrf(config):
     rng, *subrng = jax.random.split(rng, 3)
 
     sdrf, sdrf_params = init_networks(config.sdrf.model, subrng)
-    with open("experiment/sphere_nerf.pkl", "rb") as pkl:
+    #with open("experiment/sphere_nerf.pkl", "rb") as pkl:
+    with open("experiment/sphere_nerf_penc.pkl", "rb") as pkl:
         g_a_params = pickle.load(pkl)
         sdrf_params = SDRFParams(geometry=g_a_params, appearance=g_a_params)
 
@@ -218,7 +230,8 @@ def train_sdrf(config):
         # loss_weights = jnp.array([3e3, 5e1, 1e2])
         # loss_weights = jnp.array([3e3, 1e-9, 1e-9])
         # loss_weights = jnp.array([3e3, 1e2, 1e2])
-        loss_weights = jnp.array([3e3, 1e2, 1e-9])
+        # loss_weights = jnp.array([3e3, 1e2, 1e-9])
+        loss_weights = jnp.array([3e3, 1e2, 1e2])
 
         return jnp.dot(jnp.array([rgb_loss, e_loss, m_loss]), loss_weights), losses
 

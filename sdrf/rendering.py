@@ -15,6 +15,11 @@ from util import map_batched_rng
 from .root_finding import sphere_trace, sphere_trace_depth, sphere_trace_depth_batched
 
 
+def cumprod_exclusive(tensor):
+    prod = jnp.roll(jnp.cumprod(tensor, axis=-1), 1, axis=-1)
+    return index_update(prod, index[..., 0], 1.0)
+
+
 def gaussian_pdf(x, mu, sigma):
     return (1 / (sigma * jnp.sqrt(2 * jnp.pi))) * jnp.exp(
         (-1 / 2) * jnp.square((x - mu) / (sigma))
@@ -106,11 +111,47 @@ def find_intersections_batched(sampler, sdf, ro, rd, params, rng, sigma, options
 
     # this is inefficient, but it works I guess
     depths = jax.lax.map(intersect, jnp.transpose(xs, axes=(1, 0)))
-    #depths = vmap(intersect)(jnp.transpose(xs, axes=(1, 0)))
+    # depths = vmap(intersect)(jnp.transpose(xs, axes=(1, 0)))
     depths = jnp.transpose(depths, (1, 0))
     depths = depths[..., jnp.newaxis]
 
     return xs, depths
+
+
+def nerf_integrate(
+        sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+):
+    inds = jnp.argsort(depths, axis=0)
+
+    sorted_depths = jnp.take_along_axis(depths, inds, axis=0)
+    sorted_attribs = tuple(
+        jnp.take_along_axis(attrib, inds, axis=0) for attrib in attribs
+    )
+    sorted_phi_x = jnp.take_along_axis(phi_x, inds, axis=0)
+    sorted_valids = jnp.take_along_axis(valid_mask, inds, axis=0)
+
+    mask_valid = lambda a, valid: jax.lax.cond(
+        valid[0], lambda a: a, lambda a: jnp.zeros_like(a), a
+    )
+
+    sorted_phi_x = vmap(mask_valid)(sorted_phi_x, sorted_valids)
+
+    dists = jnp.concatenate(
+        [
+            sorted_depths[1:] - sorted_depths[:-1],
+            jnp.ones_like(sorted_depths[:1]) * 1e10,
+        ],
+        axis=0,
+    )
+    dists = vmap(mask_valid)(dists, sorted_valids)
+    dists = dists * jnp.linalg.norm(rd)
+
+    alpha = 1.0 - jnp.exp(-sorted_phi_x * dists)
+    weights = alpha * cumprod_exclusive(1.0 - alpha + 1e-10)
+
+    attribs_map = tuple(jnp.sum(attrib * weights, axis=0) for attrib in sorted_attribs)
+
+    return attribs_map
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))

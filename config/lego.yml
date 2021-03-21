@@ -85,6 +85,7 @@ sdrf:
     oryx_debug: False
   model:
     network:
+      weight_file: "experiment/sphere_nerf_penc.pkl"
       num_layers: 8
       hidden_size: 128
       skip_connect_every: 3

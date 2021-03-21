@@ -44,8 +44,8 @@ def init_networks(config, rng):
             skip_connect_every=config.network.skip_connect_every,
             geometric_init=False,
         )(
-            positional_encoding(x, config.network.num_encoding_fn_xyz),
-            #x,
+            # positional_encoding(x, config.network.num_encoding_fn_xyz),
+            x,
             None,
             mode=NeRFModelMode.GEOMETRY,
         )
@@ -57,10 +57,10 @@ def init_networks(config, rng):
             skip_connect_every=config.network.skip_connect_every,
             geometric_init=False,
         )(
-            positional_encoding(x, config.network.num_encoding_fn_xyz),
-            positional_encoding(view, config.network.num_encoding_fn_dir),
-            #x,
-            #view,
+            # positional_encoding(x, config.network.num_encoding_fn_xyz),
+            # positional_encoding(view, config.network.num_encoding_fn_dir),
+            x,
+            view,
             mode=NeRFModelMode.APPEARANCE,
         )
     )
@@ -130,7 +130,7 @@ def train_sdrf(config):
     rng, *subrng = jax.random.split(rng, 3)
 
     sdrf, sdrf_params = init_networks(config.sdrf.model, subrng)
-    #with open("experiment/sphere_nerf.pkl", "rb") as pkl:
+    # with open("experiment/sphere_nerf.pkl", "rb") as pkl:
     with open("experiment/sphere_nerf_penc.pkl", "rb") as pkl:
         g_a_params = pickle.load(pkl)
         sdrf_params = SDRFParams(geometry=g_a_params, appearance=g_a_params)
@@ -280,7 +280,7 @@ def train_sdrf(config):
         (loss, losses), (grads,) = value_and_grad_fn(
             subrng, params, train_image_seq[i], i
         )
-        grads = clip_grads(grads, 1.0)
+        # grads = clip_grads(grads, 1.0)
 
         optimizer_state = update(i, grads, optimizer_state)
 

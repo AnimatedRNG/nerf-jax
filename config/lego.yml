@@ -68,12 +68,12 @@ sdrf:
     linear:
       support: 5.0E-2
     stratified:
-      support: 1.0E-1
+      support: 5.0E-2
     gaussian:
       sigma: 5.0E-2
   render:
     phi:
-      initial_sigma: 1.0E-1
+      initial_sigma: 5.0E-2
       #lr_decay: 250
       lr_decay: 2
       lr_decay_factor: 0.1
@@ -91,6 +91,6 @@ sdrf:
       num_encoding_fn_xyz: 6
       num_encoding_fn_dir: 4
     optimizer:
-      initial_lr: 5.0E-4
+      initial_lr: 1.0E-4
       lr_decay: 10
       lr_decay_factor: 0.1

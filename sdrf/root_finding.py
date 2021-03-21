@@ -50,7 +50,7 @@ def sphere_trace_depth_batched(sdf, ro, rd, iso, truncation, *params):
         depth = scalarize((old_depth + old_dist))
         pt = depth * rd_i + ro_i
         dist = sdf(pt, *params) - iso_i
-        #dist = jnp.minimum(jnp.abs(dist), truncation) * jnp.sign(dist)
+        # dist = jnp.minimum(jnp.abs(dist), truncation) * jnp.sign(dist)
         return (dist, depth, pt, rd_i, ro_i, iso_i)
 
     _, depth, _, _, _, _ = dvmap_while(
@@ -68,7 +68,7 @@ def sphere_trace_depth_batched(sdf, ro, rd, iso, truncation, *params):
         ),
         max_iters=30,
         num_segments=10,
-        use_dvmap=True
+        use_dvmap=True,
     )
 
     return depth
@@ -118,7 +118,7 @@ def sphere_trace_depth(sdf, ro, rd, iso, truncation, *params):
     def cond_fun(carry):
         dist, _, iteration, _ = carry
         abs_dist = scalarize(jnp.abs(dist - iso))
-        return (iteration < 30) & (abs_dist < 1e10) & (abs_dist > 1e-3)
+        return (iteration < 30) & (abs_dist < 5.0) & (abs_dist > 1e-3)
 
     def body_fun(carry):
         old_dist, old_depth, iteration, old_pt = carry

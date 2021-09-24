@@ -207,7 +207,7 @@ def write_sdf_summary(model_fn, params, writer, total_steps, prefix='train_'):
 
     sdf_values = sdf_values.reshape(N, N, N)
     with mrcfile.new_mmap('sdf_values.mrc', overwrite=True, shape=(N, N, N), mrc_mode=2) as mrc:
-        mrc.data[:] = sdf_values
+        mrc.data[:] = -sdf_values
 
 
 def cosine_similarity(a, b, eps=1e-8):

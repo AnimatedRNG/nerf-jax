@@ -2,6 +2,7 @@ import operator
 import functools
 from itertools import accumulate
 from collections import namedtuple
+import os
 
 import numpy as np
 import jax
@@ -235,3 +236,8 @@ def gradient_visualization(g, min_val=None, max_val=None):
     scaled = (g - min_val) / (max_val - min_val + 1e-9)
 
     return scaled
+
+
+def cond_mkdir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)

@@ -5,7 +5,7 @@ import functools
 import numpy as np
 import jax
 import jax.numpy as jnp
-from jax import jit, vmap, grad, vjp, defvjp
+from jax import jit, vmap, grad, vjp
 from jax.tree_util import tree_map
 from jax.lax import while_loop
 

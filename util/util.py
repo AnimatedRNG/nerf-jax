@@ -11,6 +11,58 @@ from jax import jit, vmap
 from jax.ops import index, index_update
 from jax.tree_util import register_pytree_node, tree_map
 from box import Box
+import matplotlib.pyplot as plt
+import mrcfile
+
+
+def grid_sample(f, grid_min, grid_max, resolution=16):
+    dimensions = grid_min.shape[0]
+
+    ds = jnp.stack(
+        jnp.meshgrid(
+            *tuple(
+                jnp.linspace(grid_min[di], grid_max[di], resolution)
+                for di in range(dimensions)
+            )
+        ),
+        axis=-1,
+    )
+    out_shape = ds.shape[:-1]
+
+    if resolution ** dimensions > 2 ** 16:
+        return (
+            ds,
+            jax.lax.map(
+                lambda grid: jax.vmap(f)(grid.reshape(-1, dimensions)), ds
+            ).reshape(*out_shape, -1),
+        )
+    else:
+        return ds, vmap(f)(ds.reshape(-1, dimensions)).reshape(*out_shape, -1)
+
+
+def plot_iso(f, grid_min, grid_max, resolution=16):
+    ds, d = jax.jit(grid_sample, static_argnums=(0, 3))(
+        f, grid_min, grid_max, resolution
+    )
+    plt.contour(
+        ds[:, :, 0],
+        ds[:, :, 1],
+        d.squeeze(),
+        levels=[
+            0,
+        ],
+    )
+    plt.show()
+
+
+def plot_heatmap(f, grid_min, grid_max, resolution=16):
+    ds, d = jax.jit(grid_sample, static_argnums=(0, 3))(
+        f, grid_min, grid_max, resolution
+    )
+    if d.shape[-1] == 2:
+        d = jnp.concatenate((d, jnp.zeros((*d.shape[:-1], 1))), axis=-1)
+    plt.imshow(abs(d))
+    plt.show()
 
 
 def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
@@ -88,10 +140,7 @@ def map_batched_tuple(tensors, f, chunksize, use_vmap, rng=None):
         return map_batched(
             jnp.concatenate(reshaped, axis=1),
             lambda chunk_args: f(
-                *tuple(
-                    reshape_arg(chunk_args, i)
-                    for i in range(len(offsets) - 1)
-                )
+                *tuple(reshape_arg(chunk_args, i) for i in range(len(offsets) - 1))
             ),
             chunksize,
             use_vmap,
@@ -102,8 +151,7 @@ def map_batched_tuple(tensors, f, chunksize, use_vmap, rng=None):
             lambda mixed_args: f(
                 *(
                     tuple(
-                        reshape_arg(mixed_args[0], i)
-                        for i in range(len(offsets) - 1)
+                        reshape_arg(mixed_args[0], i) for i in range(len(offsets) - 1)
                     )
                     + (mixed_args[1],)
                 )
@@ -241,3 +289,15 @@ def gradient_visualization(g, min_val=None, max_val=None):
 def cond_mkdir(path):
     if not os.path.exists(path):
         os.makedirs(path)
+
+
+def create_mrc(filename, fn, grid_min, grid_max, resolution=256, batch_size=2 ** 13):
+    dimensions = grid_min.shape[0]
+    sdf = jax.jit(grid_sample, static_argnums=(0, 3))(
+        fn, grid_min, grid_max, resolution=resolution
+    )[1][..., 0]
+
+    with mrcfile.new_mmap(
+        filename, overwrite=True, shape=(resolution,) * dimensions, mrc_mode=2
+    ) as mrc:
+        mrc.data[:] = -sdf

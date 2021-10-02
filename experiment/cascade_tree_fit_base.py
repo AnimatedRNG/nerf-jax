@@ -32,7 +32,7 @@ def fit(
         rng,
         jnp.ones(
             [
-                3,
+                model_vertices.shape[-1],
             ]
         ),
     )
@@ -48,7 +48,7 @@ def fit(
         on_surface_pts = model_vertices
 
         off_surface_pts = jax.random.uniform(
-            rng, (batch_size // 2, 3), minval=-1.0, maxval=1.0
+            rng, (batch_size // 2, model_vertices.shape[-1]), minval=-1.0, maxval=1.0
         )
 
         total_pts = jnp.concatenate((on_surface_pts, off_surface_pts), axis=0)

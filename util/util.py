@@ -52,7 +52,6 @@ def plot_iso(f, grid_min, grid_max, resolution=16):
             0,
         ],
     )
-    plt.show()
 
 
 def plot_heatmap(f, grid_min, grid_max, resolution=16):
@@ -62,7 +61,6 @@ def plot_heatmap(f, grid_min, grid_max, resolution=16):
     if d.shape[-1] == 2:
         d = jnp.concatenate((d, jnp.zeros((*d.shape[:-1], 1))), axis=-1)
     plt.imshow(abs(d))
-    plt.show()
 
 
 def get_ray_bundle(height, width, focal_length, tfrom_cam2world):

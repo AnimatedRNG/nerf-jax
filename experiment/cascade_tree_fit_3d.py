@@ -39,20 +39,11 @@ def get_model(filename):
 def main():
     rng = jax.random.PRNGKey(1024)
 
-    decoder_fn = hk.transform(lambda x: IGR([32, 32], beta=0)(x))
+    create_decoder_fn = lambda: IGR([32, 32], beta=0)
 
     subrng = jax.random.split(rng, 2)
 
     feature_size = 16
-    ps = decoder_fn.init(
-        subrng[0],
-        jnp.ones(
-            [
-                feature_size,
-            ]
-        ),
-    )
-    decoder_fn = hk.without_apply_rng(decoder_fn)
     max_depth = 5
 
     grid_min = jnp.array([-1.0, -1.0, -1.0])
@@ -60,7 +51,7 @@ def main():
 
     scene = hk.transform(
         lambda p: CascadeTree(
-            [lambda p: decoder_fn.apply(ps, p) for _ in range(max_depth)],
+            create_decoder_fn,
             grid_min=grid_min,
             grid_max=grid_max,
             union_fn=lambda a, b: exp_smin(a, b, 32),

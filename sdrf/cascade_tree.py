@@ -137,7 +137,7 @@ def n_dimensional_interpolation(cs, alpha):
 class CascadeTree(hk.Module):
     def __init__(
         self,
-        decoder_fns,
+        create_decoder_fn,
         grid_min=jnp.array([-1.0, -1.0]),
         grid_max=jnp.array([1.0, 1.0]),
         union_fn=exp_smin,
@@ -154,8 +154,8 @@ class CascadeTree(hk.Module):
             tuple(itertools.product(range(2), repeat=self.dimensions))
         )
         self.sample_locs = self.sample_locs.reshape((2,) * self.dimensions + (-1,))
+        self.create_decoder_fn = create_decoder_fn
 
-        self.decoder_fns = decoder_fns
         self.grid_min = grid_min
         self.grid_max = grid_max
         self.union_fn = union_fn
@@ -179,6 +179,8 @@ class CascadeTree(hk.Module):
 
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
 
+        decoder_fns = [self.create_decoder_fn() for i in range(self.max_depth)]
+
         def fetch_miplevel(level):
             idx_f = alpha * jnp.array(self.dims[level]).astype(jnp.float32)
 
@@ -192,15 +194,17 @@ class CascadeTree(hk.Module):
             ).reshape(xs.shape[:-1] + (self.feature_size,))
             return n_dimensional_interpolation(cs, idx_alpha)
 
-        depth = min(len(self.decoder_fns), self.max_depth)
+        depth = self.max_depth
         predecode_fns = [hk.Linear(self.feature_size) for i in range(depth)]
 
         # pt = pt * 2 - 1
         mip_levels = tuple(
-            self.decoder_fns[i](fetch_miplevel(i) * 0.5 + predecode_fns[i](pt) * 0.5)
+            decoder_fns[i](
+                fetch_miplevel(i) * 0.5 + predecode_fns[i](pt) * 0.5,
+            )
             for i in range(2, depth)
         )
         samples = reduce(self.union_fn, mip_levels)
-        samples = mip_levels[-1]
+        # samples = mip_levels[-1]
 
         return samples

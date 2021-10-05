@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import haiku as hk
 
 from util import get_fan
+from jax.experimental.host_callback import id_print
 
 
 @jax.custom_jvp
@@ -145,6 +146,7 @@ class CascadeTree(hk.Module):
         feature_size=128,
         feature_initializer_fn=sphere_init,
     ):
+
         super(CascadeTree, self).__init__()
         self.dimensions = grid_min.shape[0]
         self.dims = tuple(
@@ -178,13 +180,11 @@ class CascadeTree(hk.Module):
         )
 
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
-
         decoder_fns = [self.create_decoder_fn() for i in range(self.max_depth)]
 
         def fetch_miplevel(level):
             idx_f = alpha * jnp.array(self.dims[level]).astype(jnp.float32)
-
-            idx = idx_f.astype(jnp.int64)
+            idx = idx_f.astype(jnp.int32)
             idx_alpha = jnp.modf(idx_f)[0]
 
             # TODO: Fix this to handle grids with different axis res
@@ -200,7 +200,7 @@ class CascadeTree(hk.Module):
         # pt = pt * 2 - 1
         mip_levels = tuple(
             decoder_fns[i](
-                fetch_miplevel(i) * 0.5 + predecode_fns[i](pt) * 0.5,
+                fetch_miplevel(i) * 0.5  # + predecode_fns[i](pt) * 0.,
             )
             for i in range(2, depth)
         )

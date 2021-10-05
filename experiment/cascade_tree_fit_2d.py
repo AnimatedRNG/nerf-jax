@@ -1,6 +1,5 @@
 import os
 import sys
-import functools
 
 module_path = os.path.abspath(os.path.join(".."))
 if module_path not in sys.path:
@@ -10,27 +9,48 @@ import numpy as np
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import pywavefront
 import matplotlib.pyplot as plt
-from drawnow import figure
 
 from sdrf import IGR, CascadeTree, exp_smin
-from util import plot_iso, plot_heatmap, create_mrc
+from util import plot_iso, plot_heatmap
 from cascade_tree_fit_base import fit
+import open3d as o3d
 
 
-def get_model(npoints=1000):
-    vec = np.random.randn(npoints, 2)
-    vec /= np.linalg.norm(vec, axis=0)
+def get_model(npoints=1000, pointcloud_path='./bunny2d.ply', keep_aspect_ratio=True):
+
+    point_cloud = np.genfromtxt(pointcloud_path)
+    coords = point_cloud[:, :2]
+    # normals = point_cloud[:, 3:]
+
+    # Reshape point cloud such that it lies in bounding box of (-1, 1) (distorts geometry, but makes for high
+    # sample efficiency)
+    coords -= np.mean(coords, axis=0, keepdims=True)
+    if keep_aspect_ratio:
+        coord_max = np.amax(coords)
+        coord_min = np.amin(coords)
+    else:
+        coord_max = np.amax(coords, axis=0, keepdims=True)
+        coord_min = np.amin(coords, axis=0, keepdims=True)
+
+    coords = (coords - coord_min) / (coord_max - coord_min)
+    coords -= 0.5
+    coords *= 2.
+    vec = coords
+
+    # vec = np.random.randn(npoints, 2)
+    # vec /= np.linalg.norm(vec, axis=0)
     return jnp.array(vec)
 
 
 def visualization_hook(
     scene_fn,
+    points,
     params,
     grid_min=jnp.array([-1.0, -1.0]),
     grid_max=jnp.array([1.0, 1.0]),
 ):
+    plt.clf()
     plt.subplot(1, 2, 1)
     plot_iso(
         lambda pt: scene_fn(params, jnp.array([pt[0], pt[2]])),
@@ -38,6 +58,8 @@ def visualization_hook(
         jnp.array([1.0, 1.0]),
         256,
     )
+
+    plt.plot(points[:, 0], points[:, 1], '.')
 
     plt.subplot(1, 2, 2)
     plot_heatmap(
@@ -56,7 +78,7 @@ def main():
     subrng = jax.random.split(rng, 2)
 
     feature_size = 16
-    max_depth = 5
+    max_depth = 3
 
     grid_min = jnp.array([-1.0, -1.0])
     grid_max = jnp.array([1.0, 1.0])
@@ -71,6 +93,11 @@ def main():
             feature_size=feature_size,
         )(p)
     )
+
+    # get a better 2D model
+    # model = get_model()
+    # plt.plot(model[:, 0], model[:, 1], '.')
+    # plt.show()
 
     fit(
         scene,

@@ -182,7 +182,7 @@ class CascadeTree(hk.Module):
         decoder_fns = [self.create_decoder_fn() for i in range(self.max_depth)]
 
         def fetch_csglevel(level):
-            idx_f = alpha * jnp.array(self.dims[level]).astype(jnp.float32)
+            idx_f = alpha * jnp.array(self.dims[level] - 1).astype(jnp.float32)
             idx = idx_f.astype(jnp.int32)
             idx_alpha = jnp.modf(idx_f)[0]
 

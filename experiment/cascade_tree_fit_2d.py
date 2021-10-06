@@ -14,10 +14,9 @@ import matplotlib.pyplot as plt
 from sdrf import IGR, CascadeTree, exp_smin
 from util import plot_iso, plot_heatmap
 from cascade_tree_fit_base import fit
-import open3d as o3d
 
 
-def get_model(npoints=1000, pointcloud_path='./bunny2d.ply', keep_aspect_ratio=True):
+def get_model(npoints=1000, pointcloud_path="./bunny2d.ply", keep_aspect_ratio=True):
 
     point_cloud = np.genfromtxt(pointcloud_path)
     coords = point_cloud[:, :2]
@@ -35,7 +34,7 @@ def get_model(npoints=1000, pointcloud_path='./bunny2d.ply', keep_aspect_ratio=T
 
     coords = (coords - coord_min) / (coord_max - coord_min)
     coords -= 0.5
-    coords *= 2.
+    coords *= 2.0
     vec = coords
 
     # vec = np.random.randn(npoints, 2)
@@ -59,7 +58,7 @@ def visualization_hook(
         256,
     )
 
-    plt.plot(points[:, 0], points[:, 1], '.')
+    plt.plot(points[:, 0], points[:, 1], ".")
 
     plt.subplot(1, 2, 2)
     plot_heatmap(

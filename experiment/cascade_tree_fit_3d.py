@@ -13,7 +13,7 @@ import pywavefront
 import matplotlib.pyplot as plt
 from drawnow import figure
 
-from sdrf import IGR, CascadeTree, exp_smin
+from sdrf import IGR, CascadeTree, MipMap, exp_smin
 from util import plot_iso, plot_heatmap, create_mrc
 from cascade_tree_fit_base import fit
 
@@ -50,12 +50,11 @@ def main():
     grid_max = jnp.array([1.0, 1.0, 1.0])
 
     scene = hk.transform(
-        lambda p: CascadeTree(
+        lambda p: MipMap(
             create_decoder_fn,
+            resolution=16,
             grid_min=grid_min,
             grid_max=grid_max,
-            union_fn=lambda a, b: exp_smin(a, b, 32),
-            max_depth=max_depth,
             feature_size=feature_size,
         )(p)
     )
@@ -70,26 +69,11 @@ def main():
 
 def visualization_hook(
     scene_fn,
+    points,
     params,
     grid_min=jnp.array([-1.0, -1.0, -1.0]),
     grid_max=jnp.array([1.0, 1.0, 1.0]),
 ):
-    plt.subplot(1, 2, 1)
-    plot_iso(
-        lambda pt: scene_fn(params, jnp.array([pt[0], 0.0, pt[2]])),
-        jnp.array([-1.0, -1.0]),
-        jnp.array([1.0, 1.0]),
-        256,
-    )
-
-    plt.subplot(1, 2, 2)
-    plot_heatmap(
-        lambda pt: scene_fn(params, jnp.array([pt[0], 0.0, pt[2]])).repeat(3, axis=-1),
-        jnp.array([-1.0, -1.0]),
-        jnp.array([1.0, 1.0]),
-        256,
-    )
-
     create_mrc("test.mrc", functools.partial(scene_fn, params), grid_min, grid_max, 256)
 
 

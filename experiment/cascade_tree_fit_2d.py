@@ -88,7 +88,6 @@ def main():
             resolution=16,
             grid_min=grid_min,
             grid_max=grid_max,
-            union_fn=lambda a, b: exp_smin(a, b, 32),
             feature_size=feature_size,
         )(p)
     )

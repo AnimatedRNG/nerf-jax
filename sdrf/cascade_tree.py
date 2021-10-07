@@ -178,7 +178,6 @@ class MipMap(hk.Module):
         resolution,
         grid_min=jnp.array([-1.0, -1.0]),
         grid_max=jnp.array([1.0, 1.0]),
-        union_fn=exp_smin,
         feature_size=128,
         feature_initializer_fn=sphere_init,
     ):
@@ -196,7 +195,6 @@ class MipMap(hk.Module):
 
         self.grid_min = grid_min
         self.grid_max = grid_max
-        self.union_fn = union_fn
         self.feature_size = feature_size
         self.feature_initializer_fn = feature_initializer_fn
 
@@ -230,7 +228,6 @@ class MipMap(hk.Module):
 
         num_levels = int(math.log2(self.resolution))
         levels = tuple(fetch_level(i) for i in range(num_levels - 1))
-        #levels = (fetch_level(num_levels - 1),)
         fused = jnp.concatenate(levels, axis=-1)
         return decoder_fn(fused)
 

@@ -180,6 +180,7 @@ class MipMap(hk.Module):
         grid_max=jnp.array([1.0, 1.0]),
         feature_size=128,
         feature_initializer_fn=sphere_init,
+        ignore_levels=2,
     ):
         super(MipMap, self).__init__()
         self.dimensions = grid_min.shape[0]
@@ -197,6 +198,7 @@ class MipMap(hk.Module):
         self.grid_max = grid_max
         self.feature_size = feature_size
         self.feature_initializer_fn = feature_initializer_fn
+        self.ignore_levels = ignore_levels
 
         self.base_features = hk.get_parameter(
             "w",
@@ -229,8 +231,18 @@ class MipMap(hk.Module):
             return n_dimensional_interpolation(cs, idx_alpha)
 
         num_levels = int(math.log2(self.resolution))
-        levels = tuple(fetch_level(i) for i in range(num_levels - 1))
-        fused = jnp.concatenate(levels, axis=-1)
+        levels = tuple(
+            fetch_level(i)
+            * hk.get_parameter(
+                f"b_{i}",
+                [1],
+                dtype=jnp.float32,
+                init=hk.initializers.Constant(1.0 / (num_levels - self.ignore_levels)),
+            )
+            for i in range(num_levels - self.ignore_levels)
+        )
+        # fused = jnp.concatenate(levels, axis=-1)
+        fused = sum(levels)
         return decoder_fn(fused)
 
 

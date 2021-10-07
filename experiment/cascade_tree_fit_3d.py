@@ -15,7 +15,7 @@ from drawnow import figure
 
 from sdrf import IGR, CascadeTree, MipMap, exp_smin
 from util import plot_iso, plot_heatmap, create_mrc
-from cascade_tree_fit_base import fit
+from cascade_tree_fit_base import fit, get_normals
 
 
 def get_model(filename):
@@ -33,7 +33,10 @@ def get_model(filename):
     model_vertices = (model_vertices - model_min) / (scale_factor)
     model_vertices = model_vertices * 2 - 1
 
-    return model_vertices
+    faces = jnp.array(model_scene.mesh_list[0].faces, dtype=jnp.int32)
+    model_normals = get_normals(model_vertices, faces)
+
+    return model_vertices, model_normals
 
 
 def main():
@@ -61,8 +64,8 @@ def main():
 
     fit(
         scene,
-        get_model("../data/stanford-bunny.obj"),
         subrng[1],
+        *get_model("../data/stanford-bunny.obj"),
         visualization_hook=visualization_hook,
         batch_size=2 ** 10,
     )

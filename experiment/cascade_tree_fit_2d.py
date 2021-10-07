@@ -99,8 +99,8 @@ def main():
 
     fit(
         scene,
-        get_model(),
         subrng[1],
+        get_model(),
         visualization_hook=visualization_hook,
     )
 

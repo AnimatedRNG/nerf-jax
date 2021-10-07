@@ -17,11 +17,29 @@ from sdrf import IGR, CascadeTree, exp_smin
 from util import plot_iso, plot_heatmap, create_mrc
 from jax.experimental.host_callback import id_print
 
+def get_normals(model_vertices, faces):
+    tris = model_vertices[faces]
+
+    normalize = lambda pt: pt / jnp.linalg.norm(pt)
+    n = jnp.cross(tris[::, 1] - tris[::, 0], tris[::, 2] - tris[::, 0])
+    n = jax.vmap(normalize)(n)
+
+    model_normals = jnp.zeros(model_vertices.shape)
+    model_normals = jax.ops.index_add(model_normals, faces[:, 0], n)
+    model_normals = jax.ops.index_add(model_normals, faces[:, 1], n)
+    model_normals = jax.ops.index_add(model_normals, faces[:, 2], n)
+    model_normals = jax.vmap(normalize)(model_normals)
+
+    return model_vertices
+
+def cosine_similarity(a, b, eps=1e-8):
+    return jnp.dot(a, b) / jnp.maximum((jnp.linalg.norm(a) * jnp.linalg.norm(b)), eps)
+
 
 def fit(
     scene,
-    model_vertices,
     rng,
+    model_vertices,
     model_normals=None,
     visualization_hook=None,
     lr=1e-3,
@@ -68,6 +86,13 @@ def fit(
 
             return (1.0 - (jnp.linalg.norm(grad_sample))) ** 2.0
 
+        def normal_loss_fn(pt, normal, params):
+            sdf = scene_fn(params, pt)
+            grad_sample = grad_sample_fn(params, pt)[0]
+            grad_sample = jnp.maximum(grad_sample, jnp.ones_like(grad_sample) * 1e-6)
+
+            return ((sdf * (1 - cosine_similarity(grad_sample, normal))) ** 2.0).sum()
+
         def inter_loss_fn(pt, params):
             sdf = scene_fn(params, pt)
             return (1 - sdf) * jnp.exp(-1e2 * jnp.abs(sdf)).sum()
@@ -78,20 +103,28 @@ def fit(
 
         eikonal_losses = vmap(lambda pt: eikonal_loss_fn(pt, params))(total_pts).sum()
 
+        normal_losses = (
+            vmap(lambda pt, normal: normal_loss_fn(pt, normal, params))(
+                on_surface_pts, model_normals
+            ).sum()
+            if model_normals is not None
+            else 1e-9
+        )
+
         inter_losses = vmap(lambda pt: inter_loss_fn(pt, params))(off_surface_pts).sum()
 
         # losses = (reconstruction_losses, eikonal_losses, inter_losses)
         # losses = (reconstruction_losses, eikonal_losses, inter_losses)
-        losses = (reconstruction_losses, eikonal_losses, inter_losses)
+        losses = (reconstruction_losses, eikonal_losses, normal_losses, inter_losses)
 
-        weights = (3e3, 1e2, 5e1)
+        weights = (3e3, 1e2, 1e2, 5e1)
         return (
             sum(loss_level * weight for loss_level, weight in zip(losses, weights)),
             losses,
         )
 
     value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True))
-    #value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
+    # value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
 
     figure(figsize=(7, 7 / 2))
 

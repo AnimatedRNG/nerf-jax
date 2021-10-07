@@ -25,9 +25,9 @@ def fit(
     model_normals=None,
     visualization_hook=None,
     lr=1e-3,
-    batch_size=2 ** 4,  # 2 ** 13,
+    batch_size=2 ** 13,
     num_epochs=100000,
-    visualization_epochs=10,
+    visualization_epochs=200,
 ):
     params = scene.init(
         rng,
@@ -46,7 +46,7 @@ def fit(
     optimizer_state = init_adam(params)
 
     def loss_fn(params, rng):
-        on_surface_pts = model_vertices[::100, :]
+        on_surface_pts = model_vertices[:, :]
 
         off_surface_pts = jax.random.uniform(
             rng, (batch_size // 2, model_vertices.shape[-1]), minval=-1.0, maxval=1.0
@@ -79,15 +79,6 @@ def fit(
         eikonal_losses = vmap(lambda pt: eikonal_loss_fn(pt, params))(total_pts).sum()
 
         inter_losses = vmap(lambda pt: inter_loss_fn(pt, params))(off_surface_pts).sum()
-
-        # for on_surface_pt in on_surface_pts:
-        #     reconstruction_losses = reconstruction_loss_fn(on_surface_pt, params).sum()
-
-        # for total_pt in total_pts:
-        #     eikonal_losses = eikonal_loss_fn(total_pt, params).sum()
-
-        # for off_surface_pt in off_surface_pts:
-        #     inter_losses = inter_loss_fn(off_surface_pt, params).sum()
 
         # losses = (reconstruction_losses, eikonal_losses, inter_losses)
         # losses = (reconstruction_losses, eikonal_losses, inter_losses)

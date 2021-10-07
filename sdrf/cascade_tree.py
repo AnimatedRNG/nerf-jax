@@ -127,50 +127,38 @@ class LayerSphereInitializer(hk.initializers.Initializer):
         )
 
 
-class DownsampleInitializer(hk.initializers.Initializer):
-    def __init__(self, base_mipmap, scale_factor):
-        self.base_mipmap = base_mipmap
+def downsample(base_mipmap, scale_factor) -> jnp.ndarray:
+    shape = base_mipmap.shape
+    ndim = len(shape) - 1
+    resolution = shape[0]
 
-        self.shape = base_mipmap.shape
-        self.scale_factor = scale_factor
+    kern = scipy.signal.gaussian(scale_factor, std=scale_factor / 2)
+    kern = kern / kern.sum()
 
-        assert math.log2(scale_factor).is_integer()
+    blurred = jnp.array(base_mipmap)
+    for dim in range(ndim):
+        n_axis = [1 for _ in range(len(shape) - 1)]
+        n_axis[dim] = scale_factor
 
-        assert all(self.shape[i] == self.shape[0] for i in range(len(self.shape) - 1))
+        # TODO(kazasrinivas3): not sure if this padding is actually right?
+        # seems to get the top off by 1
+        padding = [(0, 0) for _ in range(len(shape))]
+        padding[dim] = (scale_factor, scale_factor)
 
-    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
-        assert tuple(shape) == tuple(self.shape)
+        blurred = jnp.pad(blurred, padding, mode="reflect")
 
-        ndim = len(shape) - 1
-        resolution = shape[0]
+        kern_nd = jnp.resize(kern, (*n_axis, 1))
+        blurred = jax.scipy.signal.convolve(
+            blurred, kern_nd, mode="same", method="direct"
+        )
 
-        kern = scipy.signal.gaussian(self.scale_factor, std=self.scale_factor / 2)
-        kern = kern / kern.sum()
+        blurred = jnp.take(
+            blurred,
+            jnp.arange(scale_factor, resolution + scale_factor),
+            axis=dim,
+        )
 
-        blurred = jnp.array(self.base_mipmap)
-        for dim in range(ndim):
-            n_axis = [1 for _ in range(len(shape) - 1)]
-            n_axis[dim] = self.scale_factor
-
-            # TODO(kazasrinivas3): not sure if this padding is actually right?
-            # seems to get the top off by 1
-            padding = [(0, 0) for _ in range(len(shape))]
-            padding[dim] = (self.scale_factor, self.scale_factor)
-
-            blurred = jnp.pad(blurred, padding, mode="reflect")
-
-            kern_nd = jnp.resize(kern, (*n_axis, 1))
-            blurred = jax.scipy.signal.convolve(
-                blurred, kern_nd, mode="same", method="direct"
-            )
-
-            blurred = jnp.take(
-                blurred,
-                jnp.arange(self.scale_factor, resolution + self.scale_factor),
-                axis=dim,
-            )
-
-        return blurred
+    return blurred
 
 
 def n_dimensional_interpolation(cs, alpha):
@@ -224,12 +212,9 @@ class MipMap(hk.Module):
         decoder_fn = self.create_decoder_fn()
 
         def fetch_level(level):
-            mipmap = hk.get_parameter(
-                f"w_{level}",
-                self.dims + (self.feature_size,),
-                dtype=jnp.float32,
-                init=DownsampleInitializer(base_features, 2 ** level),
-            ) if level > 0 else base_features
+            mipmap = (
+                downsample(base_features, 2 ** level) if level > 0 else base_features
+            )
 
             # lattice point interpolation, not grid
             idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
@@ -244,8 +229,8 @@ class MipMap(hk.Module):
             return n_dimensional_interpolation(cs, idx_alpha)
 
         num_levels = int(math.log2(self.resolution))
-        #levels = tuple(fetch_level(i) for i in range(num_levels - 1))
-        levels = tuple(fetch_level(i) for i in range(1))
+        levels = tuple(fetch_level(i) for i in range(num_levels - 1))
+        #levels = (fetch_level(num_levels - 1),)
         fused = jnp.concatenate(levels, axis=-1)
         return decoder_fn(fused)
 

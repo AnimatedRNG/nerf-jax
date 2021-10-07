@@ -3,10 +3,12 @@
 from typing import Any, Tuple, Sequence
 import itertools
 from functools import reduce
+import math
 
 import jax
 from jax import vmap
 import jax.numpy as jnp
+import scipy
 import haiku as hk
 
 from util import get_fan
@@ -115,7 +117,7 @@ class LayerSphereInitializer(hk.initializers.Initializer):
         self.grid_max = grid_max
 
     def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
-        # shape is [dim_x, dim_y, ..., hidden_size]
+        # shape is [dim_x, dim_y, ...,hidden_size]
         assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
         resolution = shape[0]
         return jax.nn.relu(
@@ -123,6 +125,52 @@ class LayerSphereInitializer(hk.initializers.Initializer):
                 self.grid_min, self.grid_max, resolution, shape[-1], dtype=dtype
             )
         )
+
+
+class DownsampleInitializer(hk.initializers.Initializer):
+    def __init__(self, base_mipmap, scale_factor):
+        self.base_mipmap = base_mipmap
+
+        self.shape = base_mipmap.shape
+        self.scale_factor = scale_factor
+
+        assert math.log2(scale_factor).is_integer()
+
+        assert all(self.shape[i] == self.shape[0] for i in range(len(self.shape) - 1))
+
+    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
+        assert tuple(shape) == tuple(self.shape)
+
+        ndim = len(shape) - 1
+        resolution = shape[0]
+
+        kern = scipy.signal.gaussian(self.scale_factor, std=self.scale_factor / 2)
+        kern = kern / kern.sum()
+
+        blurred = jnp.array(self.base_mipmap)
+        for dim in range(ndim):
+            n_axis = [1 for _ in range(len(shape) - 1)]
+            n_axis[dim] = self.scale_factor
+
+            # TODO(kazasrinivas3): not sure if this padding is actually right?
+            # seems to get the top off by 1
+            padding = [(0, 0) for _ in range(len(shape))]
+            padding[dim] = (self.scale_factor, self.scale_factor)
+
+            blurred = jnp.pad(blurred, padding, mode="reflect")
+
+            kern_nd = jnp.resize(kern, (*n_axis, 1))
+            blurred = jax.scipy.signal.convolve(
+                blurred, kern_nd, mode="same", method="direct"
+            )
+
+            blurred = jnp.take(
+                blurred,
+                jnp.arange(self.scale_factor, resolution + self.scale_factor),
+                axis=dim,
+            )
+
+        return blurred
 
 
 def n_dimensional_interpolation(cs, alpha):
@@ -133,6 +181,73 @@ def n_dimensional_interpolation(cs, alpha):
         a = cs[0]
         b = cs[1]
     return (1 - alpha[0]) * a + alpha[0] * b
+
+
+class MipMap(hk.Module):
+    def __init__(
+        self,
+        create_decoder_fn,
+        resolution,
+        grid_min=jnp.array([-1.0, -1.0]),
+        grid_max=jnp.array([1.0, 1.0]),
+        union_fn=exp_smin,
+        feature_size=128,
+        feature_initializer_fn=sphere_init,
+    ):
+        super(MipMap, self).__init__()
+        self.dimensions = grid_min.shape[0]
+        self.resolution = resolution
+        self.dims = tuple(self.resolution for _ in range(self.dimensions))
+        self.sample_locs = jnp.array(
+            tuple(itertools.product(range(2), repeat=self.dimensions))
+        )
+        self.sample_locs = self.sample_locs.reshape((2,) * self.dimensions + (-1,))
+        self.create_decoder_fn = create_decoder_fn
+
+        self.num_levels = int(math.log2(self.resolution))
+
+        self.grid_min = grid_min
+        self.grid_max = grid_max
+        self.union_fn = union_fn
+        self.feature_size = feature_size
+        self.feature_initializer_fn = feature_initializer_fn
+
+    def __call__(self, pt: jnp.ndarray):
+        base_features = hk.get_parameter(
+            "w",
+            self.dims + (self.feature_size,),
+            dtype=jnp.float32,
+            init=LayerSphereInitializer(self.grid_min, self.grid_max),
+        )
+
+        alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
+        decoder_fn = self.create_decoder_fn()
+
+        def fetch_level(level):
+            mipmap = hk.get_parameter(
+                f"w_{level}",
+                self.dims + (self.feature_size,),
+                dtype=jnp.float32,
+                init=DownsampleInitializer(base_features, 2 ** level),
+            ) if level > 0 else base_features
+
+            # lattice point interpolation, not grid
+            idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
+            idx = idx_f.astype(jnp.int32)
+            idx_alpha = jnp.modf(idx_f)[0]
+
+            # TODO: is the clipping even needed anymore?
+            xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
+            cs = vmap(lambda x: mipmap[tuple(x)])(
+                xs.reshape(-1, self.dimensions)
+            ).reshape(xs.shape[:-1] + (self.feature_size,))
+            return n_dimensional_interpolation(cs, idx_alpha)
+
+        num_levels = int(math.log2(self.resolution))
+        #levels = tuple(fetch_level(i) for i in range(num_levels - 1))
+        levels = tuple(fetch_level(i) for i in range(1))
+        fused = jnp.concatenate(levels, axis=-1)
+        return decoder_fn(fused)
 
 
 class CascadeTree(hk.Module):
@@ -157,6 +272,15 @@ class CascadeTree(hk.Module):
         self.sample_locs = self.sample_locs.reshape((2,) * self.dimensions + (-1,))
         self.create_decoder_fn = create_decoder_fn
 
+        self.num_levels = (int(math.log2(self.dims[i])) for i in range(max_depth))
+        self.mip_resolutions = (
+            (
+                (2 ** level for _ in range(self.dimensions))
+                for level in range(self.num_levels)
+            )
+            for i in range(max_depth)
+        )
+
         self.grid_min = grid_min
         self.grid_max = grid_max
         self.union_fn = union_fn
@@ -165,9 +289,6 @@ class CascadeTree(hk.Module):
         self.feature_initializer_fn = feature_initializer_fn
 
     def __call__(self, pt: jnp.ndarray):
-        fetch_grid = lambda s: self.feature_initializer_fn(
-            self.grid_min, self.grid_max, s[0], self.feature_size
-        )
         features = tuple(
             hk.get_parameter(
                 f"w_{i}",
@@ -175,20 +296,20 @@ class CascadeTree(hk.Module):
                 dtype=jnp.float32,
                 init=LayerSphereInitializer(self.grid_min, self.grid_max),
             )
-            for i, dim in enumerate(self.dims)
+            for i, _ in enumerate(self.dims)
         )
 
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
         decoder_fns = [self.create_decoder_fn() for i in range(self.max_depth)]
 
-        def fetch_csglevel(level):
-            idx_f = alpha * (jnp.array(self.dims[level]).astype(jnp.float32) - 1)
+        def fetch_csglevel(csglevel):
+            idx_f = alpha * (jnp.array(self.dims[csglevel]).astype(jnp.float32) - 1)
             idx = idx_f.astype(jnp.int32)
             idx_alpha = jnp.modf(idx_f)[0]
 
             # TODO: Fix this to handle grids with different axis res
-            xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.dims[level][0])
-            cs = vmap(lambda x: features[level][tuple(x)])(
+            xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.dims[csglevel][0])
+            cs = vmap(lambda x: features[csglevel][tuple(x)])(
                 xs.reshape(-1, self.dimensions)
             ).reshape(xs.shape[:-1] + (self.feature_size,))
             return n_dimensional_interpolation(cs, idx_alpha)

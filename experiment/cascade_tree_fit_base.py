@@ -25,7 +25,7 @@ def fit(
     model_normals=None,
     visualization_hook=None,
     lr=1e-3,
-    batch_size=2**4, # 2 ** 13,
+    batch_size=2 ** 4,  # 2 ** 13,
     num_epochs=100000,
     visualization_epochs=10,
 ):
@@ -64,7 +64,7 @@ def fit(
             # grad_sample = clip_grads(grad_sample[0], 1.0)
             grad_sample = grad_sample[0]
 
-            grad_sample = jnp.maximum(grad_sample, jnp.ones_like(grad_sample)*1e-6)
+            grad_sample = jnp.maximum(grad_sample, jnp.ones_like(grad_sample) * 1e-6)
 
             return (1.0 - (jnp.linalg.norm(grad_sample))) ** 2.0
 
@@ -99,8 +99,8 @@ def fit(
             losses,
         )
 
-    # value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True))
-    value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
+    value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True))
+    #value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
 
     figure(figsize=(7, 7 / 2))
 

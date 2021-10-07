@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from sdrf import IGR, CascadeTree, exp_smin
+from sdrf import IGR, MipMap, CascadeTree, exp_smin
 from util import plot_iso, plot_heatmap
 from cascade_tree_fit_base import fit
 
@@ -83,12 +83,12 @@ def main():
     grid_max = jnp.array([1.0, 1.0])
 
     scene = hk.transform(
-        lambda p: CascadeTree(
+        lambda p: MipMap(
             create_decoder_fn,
+            resolution=16,
             grid_min=grid_min,
             grid_max=grid_max,
             union_fn=lambda a, b: exp_smin(a, b, 32),
-            max_depth=max_depth,
             feature_size=feature_size,
         )(p)
     )

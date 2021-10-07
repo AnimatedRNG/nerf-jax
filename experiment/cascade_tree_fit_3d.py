@@ -39,7 +39,7 @@ def get_model(filename):
 def main():
     rng = jax.random.PRNGKey(1024)
 
-    create_decoder_fn = lambda: IGR([32, 32], beta=0)
+    create_decoder_fn = lambda: IGR([32, 32], beta=100.0)
 
     subrng = jax.random.split(rng, 2)
 
@@ -64,6 +64,7 @@ def main():
         get_model("../data/stanford-bunny.obj"),
         subrng[1],
         visualization_hook=visualization_hook,
+        batch_size=2 ** 10,
     )
 
 

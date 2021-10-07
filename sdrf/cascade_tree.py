@@ -198,21 +198,23 @@ class MipMap(hk.Module):
         self.feature_size = feature_size
         self.feature_initializer_fn = feature_initializer_fn
 
-    def __call__(self, pt: jnp.ndarray):
-        base_features = hk.get_parameter(
+        self.base_features = hk.get_parameter(
             "w",
             self.dims + (self.feature_size,),
             dtype=jnp.float32,
             init=LayerSphereInitializer(self.grid_min, self.grid_max),
         )
+        self.mipmaps = [
+            downsample(self.base_features, 2 ** i) if i > 0 else self.base_features
+            for i in range(self.num_levels - 1)
+        ]
 
+    def __call__(self, pt: jnp.ndarray):
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
         decoder_fn = self.create_decoder_fn()
 
         def fetch_level(level):
-            mipmap = (
-                downsample(base_features, 2 ** level) if level > 0 else base_features
-            )
+            mipmap = self.mipmaps[level]
 
             # lattice point interpolation, not grid
             idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)

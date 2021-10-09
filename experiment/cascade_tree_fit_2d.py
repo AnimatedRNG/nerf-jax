@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from sdrf import IGR, MipMap, CascadeTree, exp_smin
+from sdrf import IGR, Siren, DumbDecoder, MipMap, CascadeTree, exp_smin
 from util import plot_iso, plot_heatmap
 from cascade_tree_fit_base import fit
 
@@ -62,7 +62,7 @@ def visualization_hook(
 
     plt.subplot(1, 2, 2)
     plot_heatmap(
-        lambda pt: scene_fn(params, jnp.array([pt[0], pt[2]])).repeat(3, axis=-1),
+        lambda pt: scene_fn(params, jnp.array([pt[0], pt[2]])),
         jnp.array([-1.0, -1.0]),
         jnp.array([1.0, 1.0]),
         256,
@@ -72,20 +72,22 @@ def visualization_hook(
 def main():
     rng = jax.random.PRNGKey(1024)
 
-    create_decoder_fn = lambda: IGR([32, 32], beta=0)
+    create_decoder_fn = lambda: IGR([32, 32, 32], skip_in=(1,), beta=100.0)
+    # create_decoder_fn = lambda: DumbDecoder([32, 32, 32])
 
     subrng = jax.random.split(rng, 2)
 
     feature_size = 16
-    max_depth = 3
 
     grid_min = jnp.array([-1.0, -1.0])
     grid_max = jnp.array([1.0, 1.0])
 
     scene = hk.transform(
-        lambda p: MipMap(
+        lambda p, scale_factor, kern_length: MipMap(
             create_decoder_fn,
-            resolution=16,
+            resolution=32,
+            scale_factor=scale_factor,
+            kern_length=kern_length,
             grid_min=grid_min,
             grid_max=grid_max,
             feature_size=feature_size,
@@ -100,6 +102,7 @@ def main():
     fit(
         scene,
         subrng[1],
+        initial_scale_factor=13.0,
         get_model(),
         visualization_hook=visualization_hook,
     )

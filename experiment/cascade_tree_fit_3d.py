@@ -42,7 +42,7 @@ def get_model(filename):
 def main():
     rng = jax.random.PRNGKey(1024)
 
-    create_decoder_fn = lambda: IGR([32, 32], beta=100.0)
+    create_decoder_fn = lambda: IGR([32, 32, 32], skip_in=(1,), beta=100.0)
 
     subrng = jax.random.split(rng, 2)
 
@@ -53,9 +53,11 @@ def main():
     grid_max = jnp.array([1.0, 1.0, 1.0])
 
     scene = hk.transform(
-        lambda p: MipMap(
+        lambda p, scale_factor, kern_length: MipMap(
             create_decoder_fn,
-            resolution=16,
+            resolution=32,
+            scale_factor=scale_factor,
+            kern_length=kern_length,
             grid_min=grid_min,
             grid_max=grid_max,
             feature_size=feature_size,
@@ -65,6 +67,7 @@ def main():
     fit(
         scene,
         subrng[1],
+        30.0,
         *get_model("../data/stanford-bunny.obj"),
         visualization_hook=visualization_hook,
         batch_size=2 ** 10,

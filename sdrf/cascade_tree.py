@@ -8,11 +8,46 @@ import math
 import jax
 from jax import vmap
 import jax.numpy as jnp
-import scipy
 import haiku as hk
 
 from util import get_fan
 from jax.experimental.host_callback import id_print
+
+
+def gaussian(M, std, sym=True):
+    r"""Return a Gaussian window.
+    Parameters
+    ----------
+    M : int
+        Number of points in the output window. If zero or less, an empty
+        array is returned.
+    std : float
+        The standard deviation, sigma.
+    sym : bool, optional
+        When True (default), generates a symmetric window, for use in filter
+        design.
+        When False, generates a periodic window, for use in spectral analysis.
+    Returns
+    -------
+    w : ndarray
+        The window, with the maximum value normalized to 1 (though the value 1
+        does not appear if `M` is even and `sym` is True).
+    Notes
+    -----
+    The Gaussian window is defined as
+    .. math::  w(n) = e^{ -\frac{1}{2}\left(\frac{n}{\sigma}\right)^2 }
+    """
+    if M == 1:
+        return jnp.ones(1, "d")
+    odd = M % 2
+    if not sym and not odd:
+        M = M + 1
+    n = jnp.arange(0, M) - (M - 1.0) / 2.0
+    sig2 = 2 * std * std
+    w = jnp.exp(-(n ** 2) / sig2)
+    if not sym and not odd:
+        w = w[:-1]
+    return w
 
 
 @jax.custom_jvp
@@ -127,23 +162,23 @@ class LayerSphereInitializer(hk.initializers.Initializer):
         )
 
 
-def downsample(base_mipmap, scale_factor) -> jnp.ndarray:
+def downsample_static(base_mipmap, scale_factor, kern_length) -> jnp.ndarray:
     shape = base_mipmap.shape
     ndim = len(shape) - 1
     resolution = shape[0]
 
-    kern = scipy.signal.gaussian(scale_factor, std=scale_factor / 2)
+    kern = gaussian(kern_length, std=scale_factor)
     kern = kern / kern.sum()
 
     blurred = jnp.array(base_mipmap)
     for dim in range(ndim):
         n_axis = [1 for _ in range(len(shape) - 1)]
-        n_axis[dim] = scale_factor
+        n_axis[dim] = kern_length
 
         # TODO(kazasrinivas3): not sure if this padding is actually right?
         # seems to get the top off by 1
         padding = [(0, 0) for _ in range(len(shape))]
-        padding[dim] = (scale_factor, scale_factor)
+        padding[dim] = (kern_length, kern_length)
 
         blurred = jnp.pad(blurred, padding, mode="reflect")
 
@@ -154,7 +189,7 @@ def downsample(base_mipmap, scale_factor) -> jnp.ndarray:
 
         blurred = jnp.take(
             blurred,
-            jnp.arange(scale_factor, resolution + scale_factor),
+            jnp.arange(kern_length, resolution + kern_length),
             axis=dim,
         )
 
@@ -176,6 +211,8 @@ class MipMap(hk.Module):
         self,
         create_decoder_fn,
         resolution,
+        scale_factor: float,
+        kern_length: int,
         grid_min=jnp.array([-1.0, -1.0]),
         grid_max=jnp.array([1.0, 1.0]),
         feature_size=128,
@@ -185,6 +222,8 @@ class MipMap(hk.Module):
         super(MipMap, self).__init__()
         self.dimensions = grid_min.shape[0]
         self.resolution = resolution
+        self.scale_factor = scale_factor
+        self.kern_length = kern_length
         self.dims = tuple(self.resolution for _ in range(self.dimensions))
         self.sample_locs = jnp.array(
             tuple(itertools.product(range(2), repeat=self.dimensions))
@@ -206,44 +245,34 @@ class MipMap(hk.Module):
             dtype=jnp.float32,
             init=LayerSphereInitializer(self.grid_min, self.grid_max),
         )
-        self.mipmaps = [
-            downsample(self.base_features, 2 ** i) if i > 0 else self.base_features
-            for i in range(self.num_levels - 1)
-        ]
 
-    def __call__(self, pt: jnp.ndarray):
+    def __call__(
+        self,
+        pt: jnp.ndarray,
+    ):
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
         decoder_fn = self.create_decoder_fn()
 
-        def fetch_level(level):
-            mipmap = self.mipmaps[level]
-
-            # lattice point interpolation, not grid
-            idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
-            idx = idx_f.astype(jnp.int32)
-            idx_alpha = jnp.modf(idx_f)[0]
-
-            # TODO: is the clipping even needed anymore?
-            xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
-            cs = vmap(lambda x: mipmap[tuple(x)])(
-                xs.reshape(-1, self.dimensions)
-            ).reshape(xs.shape[:-1] + (self.feature_size,))
-            return n_dimensional_interpolation(cs, idx_alpha)
-
-        num_levels = int(math.log2(self.resolution))
-        levels = tuple(
-            fetch_level(i)
-            * hk.get_parameter(
-                f"b_{i}",
-                [1],
-                dtype=jnp.float32,
-                init=hk.initializers.Constant(1.0 / (num_levels - self.ignore_levels)),
-            )
-            for i in range(num_levels - self.ignore_levels)
+        # does this actually work? I still saw nans unless I selected a minimum sigma
+        feature_map = jax.lax.select(
+            self.scale_factor > 0.5,
+            downsample_static(self.base_features, self.scale_factor, self.kern_length),
+            self.base_features,
         )
-        # fused = jnp.concatenate(levels, axis=-1)
-        fused = sum(levels)
-        return decoder_fn(fused)
+
+        # lattice point interpolation, not grid
+        idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
+        idx = idx_f.astype(jnp.int32)
+        idx_alpha = jnp.modf(idx_f)[0]
+
+        # TODO: is the clipping even needed anymore?
+        xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
+        cs = vmap(lambda x: feature_map[tuple(x)])(
+            xs.reshape(-1, self.dimensions)
+        ).reshape(xs.shape[:-1] + (self.feature_size,))
+        pt_feature = n_dimensional_interpolation(cs, idx_alpha)
+
+        return decoder_fn(pt_feature)
 
 
 class CascadeTree(hk.Module):

@@ -58,8 +58,13 @@ def plot_heatmap(f, grid_min, grid_max, resolution=16):
     ds, d = jax.jit(grid_sample, static_argnums=(0, 3))(
         f, grid_min, grid_max, resolution
     )
+    only_valid = lambda a: jnp.clip(a, a_min=0, a_max=1)
     if d.shape[-1] == 2:
         d = jnp.concatenate((d, jnp.zeros((*d.shape[:-1], 1))), axis=-1)
+    if d.shape[-1] == 1 or d.ndim == 2:
+        if d.ndim == 3:
+            d = d[..., 0]
+        d = jnp.stack([only_valid(d), only_valid(-d), jnp.zeros_like(d)], axis=-1)
     plt.imshow(abs(d))
 
 

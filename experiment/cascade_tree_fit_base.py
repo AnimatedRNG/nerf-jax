@@ -1,6 +1,7 @@
 import os
 import sys
 import functools
+import math
 
 module_path = os.path.abspath(os.path.join(".."))
 if module_path not in sys.path:
@@ -17,6 +18,7 @@ from sdrf import IGR, CascadeTree, exp_smin
 from util import plot_iso, plot_heatmap, create_mrc
 from jax.experimental.host_callback import id_print
 
+
 def get_normals(model_vertices, faces):
     tris = model_vertices[faces]
 
@@ -32,6 +34,7 @@ def get_normals(model_vertices, faces):
 
     return model_vertices
 
+
 def cosine_similarity(a, b, eps=1e-8):
     return jnp.dot(a, b) / jnp.maximum((jnp.linalg.norm(a) * jnp.linalg.norm(b)), eps)
 
@@ -39,6 +42,7 @@ def cosine_similarity(a, b, eps=1e-8):
 def fit(
     scene,
     rng,
+    initial_scale_factor,
     model_vertices,
     model_normals=None,
     visualization_hook=None,
@@ -47,23 +51,22 @@ def fit(
     num_epochs=100000,
     visualization_epochs=200,
 ):
-    params = scene.init(
-        rng,
-        jnp.ones(
-            [
-                model_vertices.shape[-1],
-            ]
-        ),
-    )
+    params = scene.init(rng, jnp.ones([model_vertices.shape[-1]]), 1.0, 16)
     scene = hk.without_apply_rng(scene)
-    scene_fn = lambda params, pt: scene.apply(params, pt)[0]
 
-    grad_sample_fn = grad(scene_fn, argnums=(1,))
+    scene_fn_multires = lambda params, pt, scale_factor, kern_length: scene.apply(
+        params, pt, scale_factor, kern_length
+    )[0]
 
     init_adam, update, get_params = adam(lambda _: lr)
     optimizer_state = init_adam(params)
 
-    def loss_fn(params, rng):
+    def loss_fn(params, scale_factor, kern_length, rng):
+        scene_fn = lambda params, pt: scene_fn_multires(
+            params, pt, scale_factor, kern_length
+        )
+        grad_sample_fn = grad(scene_fn, argnums=(1,))
+
         on_surface_pts = model_vertices[:, :]
 
         off_surface_pts = jax.random.uniform(
@@ -123,20 +126,34 @@ def fit(
             losses,
         )
 
-    value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True))
+    value_loss_fn_jit = jax.jit(
+        jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True), static_argnums=(2,)
+    )
     # value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
 
     figure(figsize=(7, 7 / 2))
 
+    step_size, decay_rate, decay_steps = initial_scale_factor, 0.5, 1000
     for epoch in range(num_epochs):
         rng, subrng = jax.random.split(rng)
         params = get_params(optimizer_state)
 
+        scale_factor = step_size * decay_rate ** (epoch / decay_steps)
+        scale_factor = jnp.maximum(scale_factor, 2.0)
+        kern_length = int(math.ceil(abs(math.log2(scale_factor)))) + 1
+
         if epoch % visualization_epochs == 0:
+            scene_fn = lambda params, pt: scene_fn_multires(
+                params, pt, scale_factor, kern_length
+            )
             drawnow(lambda: visualization_hook(scene_fn, model_vertices, params))
 
-        (loss, losses), gradient = value_loss_fn_jit(params, subrng)
-        print(f"epoch {epoch}; loss {loss}, losses: {losses}")
+        (loss, losses), gradient = value_loss_fn_jit(
+            params, scale_factor, kern_length, subrng
+        )
+        print(
+            f"epoch {epoch}; scale_factor: {scale_factor}; loss {loss}, losses: {losses}"
+        )
 
         # gradient = clip_grads(gradient[0], 1.0)
         gradient = gradient[0]

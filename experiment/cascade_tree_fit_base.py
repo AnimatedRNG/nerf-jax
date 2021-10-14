@@ -10,7 +10,7 @@ if module_path not in sys.path:
 import haiku as hk
 import jax
 import jax.numpy as jnp
-from jax.experimental.optimizers import adam
+from jax.experimental.optimizers import adam, sgd
 from jax import grad, vmap
 from drawnow import drawnow, figure
 
@@ -141,6 +141,7 @@ def fit(
         scale_factor = step_size * decay_rate ** (epoch / decay_steps)
         scale_factor = jnp.maximum(scale_factor, 2.0)
         kern_length = int(math.ceil(abs(math.log2(scale_factor)))) + 1
+        #kern_length = 32
 
         if epoch % visualization_epochs == 0:
             scene_fn = lambda params, pt: scene_fn_multires(

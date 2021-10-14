@@ -102,7 +102,7 @@ def main():
     fit(
         scene,
         subrng[1],
-        initial_scale_factor=13.0,
+        30.0,
         get_model(),
         visualization_hook=visualization_hook,
     )

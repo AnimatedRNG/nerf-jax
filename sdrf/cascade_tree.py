@@ -183,9 +183,25 @@ def downsample_static(base_mipmap, scale_factor, kern_length) -> jnp.ndarray:
         blurred = jnp.pad(blurred, padding, mode="reflect")
 
         kern_nd = jnp.resize(kern, (*n_axis, 1))
-        blurred = jax.scipy.signal.convolve(
+        """blurred = jax.scipy.signal.convolve(
             blurred, kern_nd, mode="same", method="direct"
-        )
+        )"""
+        conv_general_dilated_separable = lambda a, b: vmap(
+            lambda a_: jax.lax.conv_general_dilated(
+                a_[jnp.newaxis, jnp.newaxis, ...],
+                b[jnp.newaxis, jnp.newaxis, ...],
+                tuple(1 for _ in range(ndim)),
+                "SAME",
+            )
+        )(a)
+        blurred = jnp.moveaxis(
+            conv_general_dilated_separable(
+                jnp.moveaxis(blurred, -1, 0),
+                kern_nd[..., -1],
+            ),
+            0,
+            -1,
+        )[0, 0]
 
         blurred = jnp.take(
             blurred,

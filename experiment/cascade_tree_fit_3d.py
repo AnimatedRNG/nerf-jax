@@ -71,8 +71,8 @@ def main():
         *get_model("../data/stanford-bunny.obj"),
         visualization_hook=visualization_hook,
         batch_size=2 ** 10,
+        lr=1e-3
     )
-
 
 def visualization_hook(
     scene_fn,

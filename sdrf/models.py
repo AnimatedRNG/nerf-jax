@@ -181,3 +181,17 @@ class Siren(hk.Module):
             x = nl(x)
 
         return x
+
+
+class DumbDecoder(hk.Module):
+    def __init__(self, depths, name=None):
+        super().__init__(name=name)
+        self.depths = depths
+
+    def __call__(self, coords):
+        x = coords
+        for depth in self.depths[:-1]:
+            x = hk.Linear(depth)(x)
+            x = jax.nn.relu(x)
+
+        return hk.Linear(self.depths[-1])(x)

@@ -9,12 +9,13 @@ if module_path not in sys.path:
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pywavefront
 import matplotlib.pyplot as plt
 from drawnow import figure
 
 from sdrf import IGR, CascadeTree, MipMap, exp_smin
-from util import plot_iso, plot_heatmap, create_mrc
+from util import plot_iso, plot_heatmap, grid_sample, create_mrc
 from cascade_tree_fit_base import fit, get_normals
 
 
@@ -67,21 +68,38 @@ def main():
     fit(
         scene,
         subrng[1],
-        30.0,
+        13.0,
         *get_model("../data/stanford-bunny.obj"),
         visualization_hook=visualization_hook,
-        batch_size=2 ** 10,
+        # batch_size=2 ** 10,
         lr=1e-3
     )
+
 
 def visualization_hook(
     scene_fn,
     points,
+    normals,
     params,
     grid_min=jnp.array([-1.0, -1.0, -1.0]),
     grid_max=jnp.array([1.0, 1.0, 1.0]),
 ):
     create_mrc("test.mrc", functools.partial(scene_fn, params), grid_min, grid_max, 256)
+
+    plt.clf()
+
+    points, normals = np.array(points), np.array(normals)
+    ax = plt.subplot(projection="3d")
+    ax.quiver(
+        points[::512, 0],
+        points[::512, 1],
+        points[::512, 2],
+        points[::512, 0],
+        points[::512, 1],
+        points[::512, 2],
+        length=0.1,
+        normalize=True
+    )
 
 
 if __name__ == "__main__":

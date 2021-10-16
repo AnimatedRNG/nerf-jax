@@ -85,7 +85,8 @@ def fit(
             # grad_sample = clip_grads(grad_sample[0], 1.0)
             grad_sample = grad_sample[0]
 
-            grad_sample = jnp.maximum(grad_sample, jnp.ones_like(grad_sample) * 1e-6)
+            # grad_sample = jnp.maximum(grad_sample, jnp.ones_like(grad_sample) * 1e-6)
+            grad_sample = jnp.where(jnp.abs(grad_sample) < 1e-6, 1e-6, grad_sample)
 
             return (1.0 - (jnp.linalg.norm(grad_sample))) ** 2.0
 
@@ -120,6 +121,7 @@ def fit(
         # losses = (reconstruction_losses, eikonal_losses, inter_losses)
         losses = (reconstruction_losses, eikonal_losses, normal_losses, inter_losses)
 
+        #weights = (3e3, 1e2, 1e2, 5e1)
         weights = (3e3, 1e2, 1e2, 5e1)
         return (
             sum(loss_level * weight for loss_level, weight in zip(losses, weights)),
@@ -141,13 +143,17 @@ def fit(
         scale_factor = step_size * decay_rate ** (epoch / decay_steps)
         scale_factor = jnp.maximum(scale_factor, 2.0)
         kern_length = int(math.ceil(abs(math.log2(scale_factor)))) + 1
-        #kern_length = 32
+        # kern_length = 32
 
         if epoch % visualization_epochs == 0:
             scene_fn = lambda params, pt: scene_fn_multires(
                 params, pt, scale_factor, kern_length
             )
-            drawnow(lambda: visualization_hook(scene_fn, model_vertices, params))
+            drawnow(
+                lambda: visualization_hook(
+                    scene_fn, model_vertices, model_normals, params
+                )
+            )
 
         (loss, losses), gradient = value_loss_fn_jit(
             params, scale_factor, kern_length, subrng

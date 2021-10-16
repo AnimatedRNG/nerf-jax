@@ -45,6 +45,7 @@ def get_model(npoints=1000, pointcloud_path="./bunny2d.ply", keep_aspect_ratio=T
 def visualization_hook(
     scene_fn,
     points,
+    normals,
     params,
     grid_min=jnp.array([-1.0, -1.0]),
     grid_max=jnp.array([1.0, 1.0]),

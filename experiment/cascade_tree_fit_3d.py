@@ -14,7 +14,7 @@ import pywavefront
 import matplotlib.pyplot as plt
 from drawnow import figure
 
-from sdrf import IGR, CascadeTree, MipMap, exp_smin
+from sdrf import IGR, CascadeTree, MipMap, exp_smin, exp_smax
 from util import plot_iso, plot_heatmap, grid_sample, create_mrc
 from cascade_tree_fit_base import fit, get_normals
 
@@ -54,14 +54,18 @@ def main():
     grid_max = jnp.array([1.0, 1.0, 1.0])
 
     scene = hk.transform(
-        lambda p, scale_factor, kern_length: MipMap(
-            create_decoder_fn,
-            resolution=32,
-            scale_factor=scale_factor,
-            kern_length=kern_length,
-            grid_min=grid_min,
-            grid_max=grid_max,
-            feature_size=feature_size,
+        lambda p, scale_factor, kern_length: CascadeTree(
+            MipMap(
+                create_decoder_fn,
+                resolution=32,
+                scale_factor=scale_factor,
+                kern_length=kern_length,
+                grid_min=grid_min,
+                grid_max=grid_max,
+                feature_size=feature_size,
+            ),
+            #union_fn=lambda a, b: exp_smax(a, -b),
+            ignore_levels=4,
         )(p)
     )
 

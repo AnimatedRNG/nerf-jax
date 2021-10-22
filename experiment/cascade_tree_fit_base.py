@@ -150,7 +150,8 @@ def fit(
         scale_factor = step_size * decay_rate ** (epoch / decay_steps)
         scale_factor = jnp.maximum(scale_factor, 2.0)
         kern_length = int(math.ceil(abs(math.log2(scale_factor)))) + 1
-        # kern_length = 32
+        # kern_length = 2 ** (int(math.ceil(abs(math.log2(scale_factor)))) + 1)
+        print("kern length is", kern_length)
 
         if epoch % visualization_epochs == 0:
             scene_fn = lambda params, pt: scene_fn_multires(

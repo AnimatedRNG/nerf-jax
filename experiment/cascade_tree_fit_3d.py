@@ -32,7 +32,7 @@ def get_model(filename):
     )
     scale_factor = jnp.max(model_max - model_min, axis=0)
     model_vertices = (model_vertices - model_min) / (scale_factor)
-    model_vertices = model_vertices * 2 - 1
+    model_vertices = model_vertices * 1.8 - 0.9
 
     faces = jnp.array(model_scene.mesh_list[0].faces, dtype=jnp.int32)
     model_normals = get_normals(model_vertices, faces)
@@ -84,7 +84,7 @@ def visualization_hook(
     grid_min=jnp.array([-1.0, -1.0, -1.0]),
     grid_max=jnp.array([1.0, 1.0, 1.0]),
 ):
-    create_mrc("test.mrc", functools.partial(scene_fn, params), grid_min, grid_max, 256)
+    create_mrc("test.mrc", functools.partial(scene_fn, params), grid_min, grid_max, 64)
 
     plt.clf()
 
@@ -98,7 +98,7 @@ def visualization_hook(
         points[::512, 1],
         points[::512, 2],
         length=0.1,
-        normalize=True
+        normalize=True,
     )
 
 

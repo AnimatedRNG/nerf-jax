@@ -45,6 +45,8 @@ def fit(
     initial_scale_factor,
     model_vertices,
     model_normals=None,
+    map_fn=lambda x: x,
+    eikonal_fn=None,
     visualization_hook=None,
     lr=1e-3,
     batch_size=2 ** 13,
@@ -65,7 +67,7 @@ def fit(
         scene_fn = lambda params, pt: scene_fn_multires(
             params, pt, scale_factor, kern_length
         )
-        grad_sample_fn = grad(scene_fn, argnums=(1,))
+        grad_sample_fn = grad(map_fn(scene_fn), argnums=(1,))
 
         on_surface_pts = model_vertices[:, :]
 
@@ -105,7 +107,12 @@ def fit(
             on_surface_pts
         ).sum()
 
-        eikonal_losses = vmap(lambda pt: eikonal_loss_fn(pt, params))(total_pts).sum()
+        if eikonal_fn is not None:
+            eikonal_losses = eikonal_fn(functools.partial(scene_fn, params))
+        else:
+            eikonal_losses = vmap(lambda pt: eikonal_loss_fn(pt, params))(
+                total_pts
+            ).sum()
 
         normal_losses = (
             vmap(lambda pt, normal: normal_loss_fn(pt, normal, params))(
@@ -121,7 +128,7 @@ def fit(
         # losses = (reconstruction_losses, eikonal_losses, inter_losses)
         losses = (reconstruction_losses, eikonal_losses, normal_losses, inter_losses)
 
-        #weights = (3e3, 1e2, 1e2, 5e1)
+        # weights = (3e3, 1e2, 1e2, 5e1)
         weights = (3e3, 1e2, 1e2, 5e1)
         return (
             sum(loss_level * weight for loss_level, weight in zip(losses, weights)),

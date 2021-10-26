@@ -89,17 +89,17 @@ class IGR(hk.Module):
 
         depths = [embedding_size] + self.depths + [1]
 
-        for layer_id in range(0, len(self.depths) - 1):
+        for layer_id in range(0, len(depths) - 1):
             if layer_id + 1 in self.skip_in:
-                out_dim = self.depths[layer_id + 1] - embedding_size
+                out_dim = depths[layer_id + 1] - embedding_size
             else:
-                out_dim = self.depths[layer_id + 1]
+                out_dim = depths[layer_id + 1]
 
             if layer_id in self.skip_in:
                 x = jnp.concatenate((x, emb), axis=-1) / jnp.sqrt(2)
 
-            w_init = w_init_last if layer_id == len(self.depths) - 2 else w_init_n
-            b_init = b_init_last if layer_id == len(self.depths) - 2 else b_init_n
+            w_init = w_init_last if layer_id == len(depths) - 2 else w_init_n
+            b_init = b_init_last if layer_id == len(depths) - 2 else b_init_n
             x = hk.Linear(
                 out_dim,
                 w_init=w_init,
@@ -107,7 +107,7 @@ class IGR(hk.Module):
                 name=f"layer_{layer_id}",
             )(x)
 
-            if layer_id < len(self.depths) - 2:
+            if layer_id < len(depths) - 2:
                 x = activation(x)
         return x
 

@@ -101,6 +101,57 @@ def exp_smin_jvp(primals, tangents):
     return (primal_out, tangent_out)
 
 
+@jax.custom_jvp
+def exp_smax(a, b, k=32):
+    """
+    Order independent smooth intersection operation
+
+    From https://iquilezles.org/www/articles/smin/smin.htm
+    """
+    res = jnp.exp2(k * a) + jnp.exp2(k * b)
+
+    # return -jnp.log2(res) / k
+
+    # required for numerical stability far from isosurface
+    # doesn't matter for our particular case, as the coordinates
+    # in each quadtree node are normalized to [0, 1] anyway
+    #
+    # also vmap(grad(exp_smin)) breaks a batching rule in JAX :/
+    return jax.lax.cond(
+        ((abs(res) < 1e-10) | (abs(res) > 1e10)).sum(),
+        lambda r: jnp.maximum(a, b),
+        lambda r: jnp.log2(r) / k,
+        res,
+    )
+
+
+@exp_smax.defjvp
+def exp_smax_jvp(primals, tangents):
+    """
+    Derivative of the above exp_smax
+    """
+    a, b, k = primals
+    da, db, _ = tangents
+
+    res = jnp.exp2(k * a) + jnp.exp2(k * b)
+
+    primal_out = jnp.log2(res) / k
+
+    tangent_exp_fn = lambda a, b: (jnp.exp2(k * b) * da + jnp.exp2(k * a) * db) / (
+        jnp.exp2(k * a) + jnp.exp2(k * b)
+    )
+    tangent_exp = tangent_exp_fn(jnp.clip(a, a_max=3.0), jnp.clip(b, a_max=3.0))
+
+    tangent_max = jax.jvp(jnp.maximum, (a, b), (da, db))[1]
+
+    tangent_out = jnp.where(
+        ((abs(res) < 1e-10) | (abs(res) > 1e10) | ~jnp.isfinite(res)),
+        tangent_max,
+        tangent_exp,
+    )
+    return (primal_out, tangent_out)
+
+
 def pow_smin(a, b, k=8):
     """
     Also from that article, doesn't work as well
@@ -233,7 +284,6 @@ class MipMap(hk.Module):
         grid_max=jnp.array([1.0, 1.0]),
         feature_size=128,
         feature_initializer_fn=sphere_init,
-        ignore_levels=2,
     ):
         super(MipMap, self).__init__()
         self.dimensions = grid_min.shape[0]
@@ -253,7 +303,6 @@ class MipMap(hk.Module):
         self.grid_max = grid_max
         self.feature_size = feature_size
         self.feature_initializer_fn = feature_initializer_fn
-        self.ignore_levels = ignore_levels
 
         self.base_features = hk.get_parameter(
             "w",
@@ -292,75 +341,35 @@ class MipMap(hk.Module):
 
 
 class CascadeTree(hk.Module):
-    def __init__(
-        self,
-        create_decoder_fn,
-        grid_min=jnp.array([-1.0, -1.0]),
-        grid_max=jnp.array([1.0, 1.0]),
-        union_fn=exp_smin,
-        max_depth=4,
-        feature_size=128,
-        feature_initializer_fn=sphere_init,
-    ):
+    def __init__(self, highest_mipmap, union_fn=exp_smin, ignore_levels=2):
         super(CascadeTree, self).__init__()
-        self.dimensions = grid_min.shape[0]
-        self.dims = tuple(
-            tuple(2 ** i for _ in range(self.dimensions)) for i in range(max_depth)
-        )
-        self.sample_locs = jnp.array(
-            tuple(itertools.product(range(2), repeat=self.dimensions))
-        )
-        self.sample_locs = self.sample_locs.reshape((2,) * self.dimensions + (-1,))
-        self.create_decoder_fn = create_decoder_fn
-
-        self.num_levels = (int(math.log2(self.dims[i])) for i in range(max_depth))
-        self.mip_resolutions = (
-            (
-                (2 ** level for _ in range(self.dimensions))
-                for level in range(self.num_levels)
-            )
-            for i in range(max_depth)
-        )
-
-        self.grid_min = grid_min
-        self.grid_max = grid_max
+        self.highest_mipmap = highest_mipmap
         self.union_fn = union_fn
-        self.max_depth = max_depth
-        self.feature_size = feature_size
-        self.feature_initializer_fn = feature_initializer_fn
+
+        self.resolution = highest_mipmap.resolution
+        self.mipmaps_res = [
+            2 ** i
+            for i in range(ignore_levels, math.floor(math.log2(self.resolution)) + 1)
+        ]
+        # Create downsampled mipmaps
+        self.mipmaps = tuple(
+            MipMap(
+                self.highest_mipmap.create_decoder_fn,
+                res,
+                self.highest_mipmap.scale_factor * (res / self.resolution),
+                self.highest_mipmap.kern_length,
+                self.highest_mipmap.grid_min,
+                self.highest_mipmap.grid_max,
+                self.highest_mipmap.feature_size,
+                self.highest_mipmap.feature_initializer_fn,
+            )
+            for res in self.mipmaps_res
+        )
 
     def __call__(self, pt: jnp.ndarray):
-        features = tuple(
-            hk.get_parameter(
-                f"w_{i}",
-                self.dims[i] + (self.feature_size,),
-                dtype=jnp.float32,
-                init=LayerSphereInitializer(self.grid_min, self.grid_max),
-            )
-            for i, _ in enumerate(self.dims)
-        )
+        csg_levels = [mipmap(pt) for mipmap in self.mipmaps]
 
-        alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
-        decoder_fns = [self.create_decoder_fn() for i in range(self.max_depth)]
-
-        def fetch_csglevel(csglevel):
-            idx_f = alpha * (jnp.array(self.dims[csglevel]).astype(jnp.float32) - 1)
-            idx = idx_f.astype(jnp.int32)
-            idx_alpha = jnp.modf(idx_f)[0]
-
-            # TODO: Fix this to handle grids with different axis res
-            xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.dims[csglevel][0])
-            cs = vmap(lambda x: features[csglevel][tuple(x)])(
-                xs.reshape(-1, self.dimensions)
-            ).reshape(xs.shape[:-1] + (self.feature_size,))
-            return n_dimensional_interpolation(cs, idx_alpha)
-
-        depth = self.max_depth
-        predecode_fns = [hk.Linear(self.feature_size) for i in range(depth)]
-
-        # pt = pt * 2 - 1
-        csg_levels = tuple(decoder_fns[i](fetch_csglevel(i)) for i in range(2, depth))
         samples = reduce(self.union_fn, csg_levels)
         # samples = mip_levels[-1]
 
-        return samples
+        return samples, csg_levels

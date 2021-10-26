@@ -58,16 +58,16 @@ def fit(
 
     scene_fn_multires = lambda params, pt, scale_factor, kern_length: scene.apply(
         params, pt, scale_factor, kern_length
-    )[0]
+    )
 
     init_adam, update, get_params = adam(lambda _: lr)
     optimizer_state = init_adam(params)
 
     def loss_fn(params, scale_factor, kern_length, rng):
-        scene_fn = lambda params, pt: scene_fn_multires(
-            params, pt, scale_factor, kern_length
+        scene_fn = lambda params, pt: map_fn(
+            scene_fn_multires(params, pt, scale_factor, kern_length)[0]
         )
-        grad_sample_fn = grad(map_fn(scene_fn), argnums=(1,))
+        grad_sample_fn = grad(scene_fn, argnums=(1,))
 
         on_surface_pts = model_vertices[:, :]
 
@@ -128,7 +128,6 @@ def fit(
         # losses = (reconstruction_losses, eikonal_losses, inter_losses)
         losses = (reconstruction_losses, eikonal_losses, normal_losses, inter_losses)
 
-        # weights = (3e3, 1e2, 1e2, 5e1)
         weights = (3e3, 1e2, 1e2, 5e1)
         return (
             sum(loss_level * weight for loss_level, weight in zip(losses, weights)),

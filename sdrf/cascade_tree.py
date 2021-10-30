@@ -213,52 +213,30 @@ class LayerSphereInitializer(hk.initializers.Initializer):
         )
 
 
-def downsample_static(base_mipmap, scale_factor, kern_length) -> jnp.ndarray:
-    shape = base_mipmap.shape
-    ndim = len(shape) - 1
-    resolution = shape[0]
+def downsample_static(base_mipmap, scale_factor) -> jnp.ndarray:
+    resolution, dims = base_mipmap.shape[0], base_mipmap.ndim - 1
+
+    # round down to the nearest odd kernel size
+    kern_length = resolution
+    if kern_length % 2 == 0:
+        kern_length = kern_length - 1
 
     kern = gaussian(kern_length, std=scale_factor)
+    # kern = gaussian(kern_length, std=1.0)
     kern = kern / kern.sum()
+    off = kern_length // 2
 
-    blurred = jnp.array(base_mipmap)
-    for dim in range(ndim):
-        n_axis = [1 for _ in range(len(shape) - 1)]
-        n_axis[dim] = kern_length
+    blurred = base_mipmap
+    for i in range(dims):
+        moved = jnp.moveaxis(blurred, i, -1)
+        reshaped = jnp.reshape(moved, (-1, resolution))
+        padded = jnp.pad(reshaped, ((0, 0), (off, off)), mode="reflect")
 
-        # TODO(kazasrinivas3): not sure if this padding is actually right?
-        # seems to get the top off by 1
-        padding = [(0, 0) for _ in range(len(shape))]
-        padding[dim] = (kern_length, kern_length)
+        evaluated = vmap(
+            lambda reshaped_i: jnp.convolve(reshaped_i, kern, mode="valid")
+        )(padded)
 
-        blurred = jnp.pad(blurred, padding, mode="reflect")
-
-        kern_nd = jnp.resize(kern, (*n_axis, 1))
-        """blurred = jax.scipy.signal.convolve(
-            blurred, kern_nd, mode="same", method="direct"
-        )"""
-        conv_general_dilated_separable = lambda a, b: vmap(
-            lambda a_: jax.lax.conv_general_dilated(
-                a_[jnp.newaxis, jnp.newaxis, ...],
-                b[jnp.newaxis, jnp.newaxis, ...],
-                tuple(1 for _ in range(ndim)),
-                "SAME",
-            )
-        )(a)
-        blurred = jnp.moveaxis(
-            conv_general_dilated_separable(
-                jnp.moveaxis(blurred, -1, 0),
-                kern_nd[..., -1],
-            ),
-            0,
-            -1,
-        )[0, 0]
-
-        blurred = jnp.take(
-            blurred,
-            jnp.arange(kern_length, resolution + kern_length),
-            axis=dim,
-        )
+        blurred = jnp.moveaxis(jnp.reshape(evaluated, moved.shape), -1, i)
 
     return blurred
 
@@ -279,7 +257,6 @@ class MipMap(hk.Module):
         create_decoder_fn,
         resolution,
         scale_factor: float,
-        kern_length: int,
         grid_min=jnp.array([-1.0, -1.0]),
         grid_max=jnp.array([1.0, 1.0]),
         feature_size=128,
@@ -289,7 +266,6 @@ class MipMap(hk.Module):
         self.dimensions = grid_min.shape[0]
         self.resolution = resolution
         self.scale_factor = scale_factor
-        self.kern_length = kern_length
         self.dims = tuple(self.resolution for _ in range(self.dimensions))
         self.sample_locs = jnp.array(
             tuple(itertools.product(range(2), repeat=self.dimensions))
@@ -318,12 +294,10 @@ class MipMap(hk.Module):
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
         decoder_fn = self.create_decoder_fn()
 
-        # does this actually work? I still saw nans unless I selected a minimum sigma
-        feature_map = jax.lax.select(
-            self.scale_factor > 0.5,
-            downsample_static(self.base_features, self.scale_factor, self.kern_length),
-            self.base_features,
+        feature_map = downsample_static(
+            self.base_features, self.scale_factor
         )
+        # feature_map = self.base_features
 
         # lattice point interpolation, not grid
         idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
@@ -357,7 +331,6 @@ class CascadeTree(hk.Module):
                 self.highest_mipmap.create_decoder_fn,
                 res,
                 self.highest_mipmap.scale_factor * (res / self.resolution),
-                self.highest_mipmap.kern_length,
                 self.highest_mipmap.grid_min,
                 self.highest_mipmap.grid_max,
                 self.highest_mipmap.feature_size,

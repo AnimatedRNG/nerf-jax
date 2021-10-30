@@ -53,19 +53,19 @@ def fit(
     num_epochs=100000,
     visualization_epochs=200,
 ):
-    params = scene.init(rng, jnp.ones([model_vertices.shape[-1]]), 1.0, 16)
+    params = scene.init(rng, jnp.ones([model_vertices.shape[-1]]), 1.0)
     scene = hk.without_apply_rng(scene)
 
-    scene_fn_multires = lambda params, pt, scale_factor, kern_length: scene.apply(
-        params, pt, scale_factor, kern_length
+    scene_fn_multires = lambda params, pt, scale_factor: scene.apply(
+        params, pt, scale_factor
     )
 
     init_adam, update, get_params = adam(lambda _: lr)
     optimizer_state = init_adam(params)
 
-    def loss_fn(params, scale_factor, kern_length, rng):
+    def loss_fn(params, scale_factor, rng):
         scene_fn = lambda params, pt: map_fn(
-            scene_fn_multires(params, pt, scale_factor, kern_length)[0]
+            scene_fn_multires(params, pt, scale_factor)[0]
         )
         grad_sample_fn = grad(scene_fn, argnums=(1,))
 
@@ -134,9 +134,7 @@ def fit(
             losses,
         )
 
-    value_loss_fn_jit = jax.jit(
-        jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True), static_argnums=(2,)
-    )
+    value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True))
     # value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
 
     figure(figsize=(7, 7 / 2))
@@ -147,24 +145,16 @@ def fit(
         params = get_params(optimizer_state)
 
         scale_factor = step_size * decay_rate ** (epoch / decay_steps)
-        scale_factor = jnp.maximum(scale_factor, 2.0)
-        kern_length = int(math.ceil(abs(math.log2(scale_factor)))) + 1
-        # kern_length = 2 ** (int(math.ceil(abs(math.log2(scale_factor)))) + 1)
-        print("kern length is", kern_length)
 
         if epoch % visualization_epochs == 0:
-            scene_fn = lambda params, pt: scene_fn_multires(
-                params, pt, scale_factor, kern_length
-            )
+            scene_fn = lambda params, pt: scene_fn_multires(params, pt, scale_factor)
             drawnow(
                 lambda: visualization_hook(
                     scene_fn, model_vertices, model_normals, params
                 )
             )
 
-        (loss, losses), gradient = value_loss_fn_jit(
-            params, scale_factor, kern_length, subrng
-        )
+        (loss, losses), gradient = value_loss_fn_jit(params, scale_factor, subrng)
         print(
             f"epoch {epoch}; scale_factor: {scale_factor}; loss {loss}, losses: {losses}"
         )

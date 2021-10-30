@@ -62,7 +62,7 @@ class ConvolutionalSDF(hk.Module):
             )(x)
             x = jax.nn.relu(x) if i < len(all_channels) - 1 else x
         out_dims = tuple(x.shape[0] for i in range(self.dimension))
-        print(f'out_dims are {out_dims}')
+        print(f"out_dims are {out_dims}")
 
         feature_map = x
 
@@ -98,7 +98,7 @@ def eikonal_loss(x: jnp.ndarray):
         convolve that last one
         """
         if xs.ndim == 1:
-            return jnp.conv(xs, kernel) / x.shape[0]
+            return jnp.convolve(xs, kernel) / x.shape[0]
         else:
             return vmap(rec_convolve)(xs)
 

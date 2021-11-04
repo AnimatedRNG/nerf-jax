@@ -5,10 +5,12 @@ import itertools
 from functools import reduce
 import math
 
+import numpy as np
 import jax
 from jax import vmap
 import jax.numpy as jnp
 import haiku as hk
+from scipy.spatial import KDTree
 
 from util import get_fan
 from jax.experimental.host_callback import id_print
@@ -180,6 +182,19 @@ def sphere_init(grid_min, grid_max, resolution, hidden_size, dtype=jnp.float32):
     )
 
 
+class PointCloudSDF(object):
+    def __init__(self, point_cloud: np.ndarray, normals: np.ndarray):
+        self.point_cloud = point_cloud
+        self.normals = normals
+        self.kd_tree = KDTree(self.point_cloud)
+
+    def __call__(self, pts: np.ndarray):
+        sdf, idx = self.kd_tree.query(pts, k=3)
+        avg_normal = np.mean(self.normals[idx], axis=1)
+        sdf = np.sum((pts - self.point_cloud[idx][:, 0]) * avg_normal, axis=-1)
+        return sdf
+
+
 class GeometricInitializer(hk.initializers.Initializer):
     def __init__(self, last_layer=False):
         self.last_layer = last_layer
@@ -294,10 +309,8 @@ class MipMap(hk.Module):
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
         decoder_fn = self.create_decoder_fn()
 
-        feature_map = downsample_static(
-            self.base_features, self.scale_factor
-        )
-        # feature_map = self.base_features
+        # feature_map = downsample_static(self.base_features, self.scale_factor)
+        feature_map = self.base_features
 
         # lattice point interpolation, not grid
         idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
@@ -342,7 +355,11 @@ class CascadeTree(hk.Module):
     def __call__(self, pt: jnp.ndarray):
         csg_levels = [mipmap(pt) for mipmap in self.mipmaps]
 
-        samples = reduce(self.union_fn, csg_levels)
-        # samples = mip_levels[-1]
+        samples = [
+            reduce(self.union_fn, csg_levels[: len(self.mipmaps) - i])
+            for i in range(len(self.mipmaps))
+        ]
+        print("samples len", len(samples))
+        # samples = [mip_levels[-1]]
 
         return samples, csg_levels

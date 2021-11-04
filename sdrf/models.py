@@ -64,7 +64,7 @@ class GeometricInitializer(hk.initializers.Initializer):
 
 
 class IGR(hk.Module):
-    def __init__(self, depths, skip_in=(4,), radius_init=1, beta=100, name=None):
+    def __init__(self, depths, skip_in=(4,), radius_init=1e-4, beta=100, name=None):
         super().__init__(name=name)
         self.depths = depths
         self.skip_in = skip_in

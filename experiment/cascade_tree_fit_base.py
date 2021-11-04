@@ -12,11 +12,40 @@ import jax
 import jax.numpy as jnp
 from jax.experimental.optimizers import adam, sgd
 from jax import grad, vmap
+import numpy as np
 from drawnow import drawnow, figure
+import matplotlib.pyplot as plt
 
-from sdrf import IGR, CascadeTree, exp_smin
+from sdrf import IGR, CascadeTree, PointCloudSDF, exp_smin
 from util import plot_iso, plot_heatmap, create_mrc
 from jax.experimental.host_callback import id_print
+
+
+def make_contour_plot(array_2d, mode="log", ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(2.75, 2.75), dpi=300)
+    else:
+        fig = plt.gcf()
+
+    if mode == "log":
+        num_levels = 6
+        levels_pos = np.logspace(-2, 0, num=num_levels)  # logspace
+        levels_neg = -1.0 * levels_pos[::-1]
+        levels = np.concatenate((levels_neg, np.zeros((0)), levels_pos), axis=0)
+        colors = plt.get_cmap("Spectral")(np.linspace(0.0, 1.0, num=num_levels * 2 + 1))
+    elif mode == "lin":
+        num_levels = 10
+        levels = np.linspace(-0.5, 0.5, num=num_levels)
+        colors = plt.get_cmap("Spectral")(np.linspace(0.0, 1.0, num=num_levels))
+
+    sample = np.flipud(array_2d)
+    CS = ax.contourf(sample, levels=levels, colors=colors)
+    fig.colorbar(CS, ax=ax)
+
+    ax.contour(sample, levels=levels, colors="k", linewidths=0.1)
+    ax.contour(sample, levels=[0], colors="k", linewidths=0.3)
+    ax.axis("off")
+    return fig
 
 
 def get_normals(model_vertices, faces):
@@ -45,7 +74,6 @@ def fit(
     initial_scale_factor,
     model_vertices,
     model_normals=None,
-    map_fn=lambda x: x,
     eikonal_fn=None,
     visualization_hook=None,
     lr=1e-3,
@@ -63,86 +91,74 @@ def fit(
     init_adam, update, get_params = adam(lambda _: lr)
     optimizer_state = init_adam(params)
 
-    def loss_fn(params, scale_factor, rng):
-        scene_fn = lambda params, pt: map_fn(
-            scene_fn_multires(params, pt, scale_factor)[0]
-        )
-        grad_sample_fn = grad(scene_fn, argnums=(1,))
+    gt_sdf = PointCloudSDF(np.array(model_vertices), np.array(model_normals))
 
-        on_surface_pts = model_vertices[:, :]
+    def loss_fn(pts, sdfs, params, scale_factor, rng):
+        scene_fn = lambda params, pt: scene_fn_multires(params, pt, scale_factor)[0]
 
-        off_surface_pts = jax.random.uniform(
-            rng, (batch_size // 2, model_vertices.shape[-1]), minval=-1.0, maxval=1.0
-        )
+        def reconstruction_loss_fn(pt, sdf, params):
+            model_outputs = scene_fn(params, pt)
+            print("num model outputs", len(model_outputs))
 
-        total_pts = jnp.concatenate((on_surface_pts, off_surface_pts), axis=0)
+            return sum(
+                jnp.sum((model_output - sdf) ** 2) for model_output in model_outputs
+            )
 
-        def reconstruction_loss_fn(pt, params):
-            model_output = scene_fn(params, pt)
+        reconstruction_losses = vmap(
+            lambda pt, sdf: reconstruction_loss_fn(pt, sdf, params)
+        )(pts, sdfs).sum()
 
-            return (model_output ** 2).sum()
-
-        def eikonal_loss_fn(pt, params):
-            grad_sample = grad_sample_fn(params, pt)
-            # grad_sample = clip_grads(grad_sample[0], 1.0)
-            grad_sample = grad_sample[0]
-
-            # grad_sample = jnp.maximum(grad_sample, jnp.ones_like(grad_sample) * 1e-6)
-            grad_sample = jnp.where(jnp.abs(grad_sample) < 1e-6, 1e-6, grad_sample)
-
-            return (1.0 - (jnp.linalg.norm(grad_sample))) ** 2.0
-
-        def normal_loss_fn(pt, normal, params):
-            sdf = scene_fn(params, pt)
-            grad_sample = grad_sample_fn(params, pt)[0]
-            grad_sample = jnp.maximum(grad_sample, jnp.ones_like(grad_sample) * 1e-6)
-
-            return ((sdf * (1 - cosine_similarity(grad_sample, normal))) ** 2.0).sum()
-
-        def inter_loss_fn(pt, params):
-            sdf = scene_fn(params, pt)
-            return (1 - sdf) * jnp.exp(-1e2 * jnp.abs(sdf)).sum()
-
-        reconstruction_losses = vmap(lambda pt: reconstruction_loss_fn(pt, params))(
-            on_surface_pts
-        ).sum()
-
-        if eikonal_fn is not None:
-            eikonal_losses = eikonal_fn(functools.partial(scene_fn, params))
-        else:
-            eikonal_losses = vmap(lambda pt: eikonal_loss_fn(pt, params))(
-                total_pts
-            ).sum()
-
-        normal_losses = (
+        """normal_losses = (
             vmap(lambda pt, normal: normal_loss_fn(pt, normal, params))(
                 on_surface_pts, model_normals
             ).sum()
             if model_normals is not None
             else 1e-9
-        )
+        )"""
 
-        inter_losses = vmap(lambda pt: inter_loss_fn(pt, params))(off_surface_pts).sum()
+        # losses = (reconstruction_losses, normal_losses)
+        losses = (reconstruction_losses,)
 
-        # losses = (reconstruction_losses, eikonal_losses, inter_losses)
-        # losses = (reconstruction_losses, eikonal_losses, inter_losses)
-        losses = (reconstruction_losses, eikonal_losses, normal_losses, inter_losses)
-
-        weights = (3e3, 1e2, 1e2, 5e1)
+        # weights = (3e3, 1e2, 1e2, 5e1)
+        weights = (3e3,)
         return (
             sum(loss_level * weight for loss_level, weight in zip(losses, weights)),
             losses,
         )
 
-    value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True))
+    value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(2,), has_aux=True))
     # value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
 
-    figure(figsize=(7, 7 / 2))
+    # figure(figsize=(7, 7 / 2))
+
+    pts_all = np.array(model_vertices)
+    pts_all = np.resize(pts_all, (2 ** 20, 3))
+    pts_all = pts_all + np.random.laplace(scale=2e-1, size=pts_all.shape)
+    print("sampled random points")
+    sdfs_all = gt_sdf(pts_all)
+
+    """test vis
+    N = 128
+    x = np.linspace(-1, 1, N)
+    coords = np.stack([arr.flatten() for arr in np.meshgrid(x, x, x)], axis=-1)
+    vis_sdf = gt_sdf(coords).reshape(N, N, N)
+    make_contour_plot(vis_sdf[:, :, N // 2], mode="log", ax=None)
+    plt.show()
+
+    end test vis"""
+
+    sdfs_all = jnp.array(sdfs_all)
 
     step_size, decay_rate, decay_steps = initial_scale_factor, 0.5, 1000
     for epoch in range(num_epochs):
-        rng, subrng = jax.random.split(rng)
+        rng, subrng_0, subrng_1 = jax.random.split(rng, 3)
         params = get_params(optimizer_state)
+
+        indices = jax.random.randint(
+            subrng_0, (batch_size,), minval=0, maxval=pts_all.shape[0]
+        )
+        pts = pts_all[indices]
+        sdfs = sdfs_all[indices]
 
         scale_factor = step_size * decay_rate ** (epoch / decay_steps)
 
@@ -154,7 +170,9 @@ def fit(
                 )
             )
 
-        (loss, losses), gradient = value_loss_fn_jit(params, scale_factor, subrng)
+        (loss, losses), gradient = value_loss_fn_jit(
+            jnp.array(pts), jnp.array(sdfs), params, scale_factor, subrng_1
+        )
         print(
             f"epoch {epoch}; scale_factor: {scale_factor}; loss {loss}, losses: {losses}"
         )

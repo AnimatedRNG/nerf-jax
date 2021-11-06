@@ -63,7 +63,7 @@ def main():
 
     # create_decoder_fn = lambda: IGR([32, 32, 32, 32], skip_in=(1,), beta=100.0)
     # create_decoder_fn = lambda: IGR([16, 16, 16, 16], skip_in=(1,), beta=100.0)
-    create_decoder_fn = lambda: IGR([16, 16, 16, 16], skip_in=tuple(), beta=100.0)
+    create_decoder_fn = lambda: IGR([16], skip_in=tuple(), beta=100.0)
 
     subrng = jax.random.split(rng, 2)
 
@@ -85,7 +85,7 @@ def main():
             ),
             # union_fn=lambda a, b: exp_smax(a, -b),
             # union_fn=lambda a, b: jnp.maximum(a, -b),
-            ignore_levels=4,
+            ignore_levels=6,
         )(p)
     )
 
@@ -98,7 +98,7 @@ def main():
         visualization_hook=visualization_hook,
         batch_size=2 ** 16,
         lr=1e-4,
-        num_epochs=2001,
+        num_epochs=10001,
     )
 
 

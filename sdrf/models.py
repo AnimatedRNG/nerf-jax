@@ -64,7 +64,7 @@ class GeometricInitializer(hk.initializers.Initializer):
 
 
 class IGR(hk.Module):
-    def __init__(self, depths, skip_in=(4,), radius_init=1e-4, beta=100, name=None):
+    def __init__(self, depths, skip_in=(4,), radius_init=0.1, beta=100, name=None):
         super().__init__(name=name)
         self.depths = depths
         self.skip_in = skip_in
@@ -76,8 +76,8 @@ class IGR(hk.Module):
 
         w_init_n = GeometricInitializer()
         w_init_last = GeometricInitializer(True)
-        b_init_n = hk.initializers.Constant(-self.radius_init)
-        b_init_last = hk.initializers.Constant(0.0)
+        b_init_n = hk.initializers.Constant(0.0)
+        b_init_last = hk.initializers.Constant(-self.radius_init)
 
         if self.beta > 0:
             activation = lambda x: jax.nn.softplus(self.beta * x) / self.beta

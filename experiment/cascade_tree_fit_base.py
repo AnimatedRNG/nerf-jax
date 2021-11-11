@@ -11,12 +11,12 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 from jax.experimental.optimizers import adam, sgd
-from jax import grad, vmap
+from jax import grad, vjp, vmap
 import numpy as np
 from drawnow import drawnow, figure
 import matplotlib.pyplot as plt
 
-from sdrf import IGR, CascadeTree, PointCloudSDF, exp_smin
+from sdrf import IGR, PointCloudSDF, exp_smin
 from util import plot_iso, plot_heatmap, create_mrc
 from jax.experimental.host_callback import id_print
 
@@ -69,7 +69,7 @@ def cosine_similarity(a, b, eps=1e-8):
 
 
 def fit(
-    scene,
+    feature_grid,
     rng,
     initial_scale_factor,
     model_vertices,
@@ -81,75 +81,60 @@ def fit(
     num_epochs=100000,
     visualization_epochs=200,
 ):
-    params = scene.init(rng, jnp.ones([model_vertices.shape[-1]]), 1.0)
-    scene = hk.without_apply_rng(scene)
-
-    scene_fn_multires = lambda params, pt, scale_factor: scene.apply(
-        params, pt, scale_factor
-    )
+    params = feature_grid.init(rng, jnp.ones([model_vertices.shape[-1]]), 1.0)
+    scene = hk.without_apply_rng(feature_grid)
 
     init_adam, update, get_params = adam(lambda _: lr)
     optimizer_state = init_adam(params)
 
-    gt_sdf = PointCloudSDF(np.array(model_vertices), np.array(model_normals))
-
-    def loss_fn(pts, sdfs, params, scale_factor, rng):
-        scene_fn = lambda params, pt: scene_fn_multires(params, pt, scale_factor)[0]
+    def loss_fn(pts, off_surface_pts, sdfs, params, scale_factor, rng):
+        scene_fn = lambda params, pts: scene.apply(params, pts, scale_factor)
 
         def reconstruction_loss_fn(pt, sdf, params):
-            model_outputs = scene_fn(params, pt)
-            print("num model outputs", len(model_outputs))
+            model_output = scene_fn(params, pt)
 
-            return sum(
-                jnp.sum((model_output - sdf) ** 2) for model_output in model_outputs
-            )
+            return jnp.sum((model_output - sdf) ** 2)
 
-        reconstruction_losses = vmap(
-            lambda pt, sdf: reconstruction_loss_fn(pt, sdf, params)
-        )(pts, sdfs).sum()
+        def eikonal_loss_fn(pt, params):
+            samples, grad_fn = vjp(lambda pts: scene_fn(params, pts), pts)
+            grad_sample = grad_fn(jnp.ones_like(samples))[0]
 
-        """normal_losses = (
-            vmap(lambda pt, normal: normal_loss_fn(pt, normal, params))(
-                on_surface_pts, model_normals
-            ).sum()
-            if model_normals is not None
-            else 1e-9
-        )"""
+            grad_sample = jnp.where(jnp.abs(grad_sample) < 1e-6, 1e-6, grad_sample)
+
+            return (1.0 - (jnp.linalg.norm(grad_sample))) ** 2.0
+
+        def laplacian_loss_fn(pt, params):
+            model_output = scene_fn(params, pt)
+            return (1 - model_output) * jnp.exp(-1e2 * jnp.abs(model_output))
+
+        reconstruction_losses = reconstruction_loss_fn(pts, sdfs, params).sum()
+
+        eikonal_losses = eikonal_loss_fn(pts, params).sum()
+
+        laplacian_losses = laplacian_loss_fn(pts, params).sum()
 
         # losses = (reconstruction_losses, normal_losses)
-        losses = (reconstruction_losses,)
+        losses = (reconstruction_losses, eikonal_losses, laplacian_losses)
 
         # weights = (3e3, 1e2, 1e2, 5e1)
-        weights = (3e3,)
+        weights = (3e3, 1e2, 5e1)
+        # weights = (1e-9, 1e-9, 5e1)
         return (
             sum(loss_level * weight for loss_level, weight in zip(losses, weights)),
             losses,
         )
 
-    value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(2,), has_aux=True))
+    value_loss_fn_jit = jax.jit(jax.value_and_grad(loss_fn, argnums=(3,), has_aux=True))
     # value_loss_fn_jit = jax.value_and_grad(loss_fn, argnums=(0,), has_aux=True)
 
     # figure(figsize=(7, 7 / 2))
 
     pts_all = np.array(model_vertices)
-    pts_all = np.resize(pts_all, (2 ** 20, 3))
-    pts_all = pts_all + np.random.laplace(scale=2e-1, size=pts_all.shape)
-    print("sampled random points")
-    sdfs_all = gt_sdf(pts_all)
+    # off_surface_pts_all = pts_all + np.random.laplace(scale=2e-1, size=pts_all.shape)
+    off_surface_pts_all = np.random.uniform(low=-1.0, high=1.0, size=pts_all.shape)
+    sdfs_all = jnp.zeros(pts_all.shape[:-1])
 
-    """test vis
-    N = 128
-    x = np.linspace(-1, 1, N)
-    coords = np.stack([arr.flatten() for arr in np.meshgrid(x, x, x)], axis=-1)
-    vis_sdf = gt_sdf(coords).reshape(N, N, N)
-    make_contour_plot(vis_sdf[:, :, N // 2], mode="log", ax=None)
-    plt.show()
-
-    end test vis"""
-
-    sdfs_all = jnp.array(sdfs_all)
-
-    step_size, decay_rate, decay_steps = initial_scale_factor, 0.5, 1000
+    step_size, decay_rate, decay_steps = initial_scale_factor, 0.9, 3000
     for epoch in range(num_epochs):
         rng, subrng_0, subrng_1 = jax.random.split(rng, 3)
         params = get_params(optimizer_state)
@@ -158,12 +143,13 @@ def fit(
             subrng_0, (batch_size,), minval=0, maxval=pts_all.shape[0]
         )
         pts = pts_all[indices]
+        off_surface_pts = off_surface_pts_all[indices]
         sdfs = sdfs_all[indices]
 
         scale_factor = step_size * decay_rate ** (epoch / decay_steps)
 
         if epoch % visualization_epochs == 0:
-            scene_fn = lambda params, pt: scene_fn_multires(params, pt, scale_factor)
+            scene_fn = lambda params, pt: scene.apply(params, pt, scale_factor)
             drawnow(
                 lambda: visualization_hook(
                     scene_fn, model_vertices, model_normals, params
@@ -171,7 +157,12 @@ def fit(
             )
 
         (loss, losses), gradient = value_loss_fn_jit(
-            jnp.array(pts), jnp.array(sdfs), params, scale_factor, subrng_1
+            jnp.array(pts),
+            off_surface_pts,
+            jnp.array(sdfs),
+            params,
+            scale_factor,
+            subrng_1,
         )
         print(
             f"epoch {epoch}; scale_factor: {scale_factor}; loss {loss}, losses: {losses}"

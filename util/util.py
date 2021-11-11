@@ -32,12 +32,12 @@ def grid_sample(f, grid_min, grid_max, resolution=16):
     if resolution ** dimensions > 2 ** 16:
         return (
             ds,
-            jax.lax.map(
-                lambda grid: jax.vmap(f)(grid.reshape(-1, dimensions)), ds
-            ).reshape(*out_shape, -1),
+            jax.lax.map(lambda grid: f(grid.reshape(-1, dimensions)), ds).reshape(
+                *out_shape, -1
+            ),
         )
     else:
-        return ds, vmap(f)(ds.reshape(-1, dimensions)).reshape(*out_shape, -1)
+        return ds, f(ds.reshape(-1, dimensions)).reshape(*out_shape, -1)
 
 
 def plot_iso(f, grid_min, grid_max, resolution=16):

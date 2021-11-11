@@ -14,7 +14,7 @@ import pywavefront
 import matplotlib.pyplot as plt
 from drawnow import figure
 
-from sdrf import IGR, CascadeTree, MipMap, exp_smin, exp_smax
+from sdrf import IGR, FeatureGrid, exp_smin, exp_smax
 from util import plot_iso, plot_heatmap, grid_sample, create_mrc
 from cascade_tree_fit_base import fit, get_normals
 
@@ -63,7 +63,13 @@ def main():
 
     # create_decoder_fn = lambda: IGR([32, 32, 32, 32], skip_in=(1,), beta=100.0)
     # create_decoder_fn = lambda: IGR([16, 16, 16, 16], skip_in=(1,), beta=100.0)
-    create_decoder_fn = lambda: IGR([16], skip_in=tuple(), beta=100.0)
+    create_decoder_fn = lambda: IGR(
+        [
+            16,
+        ],
+        skip_in=tuple(),
+        beta=100.0,
+    )
 
     subrng = jax.random.split(rng, 2)
 
@@ -73,31 +79,25 @@ def main():
     grid_min = jnp.array([-1.0, -1.0, -1.0])
     grid_max = jnp.array([1.0, 1.0, 1.0])
 
-    scene = hk.transform(
-        lambda p, scale_factor: CascadeTree(
-            MipMap(
-                create_decoder_fn,
-                resolution=64,
-                scale_factor=scale_factor,
-                grid_min=grid_min,
-                grid_max=grid_max,
-                feature_size=feature_size,
-            ),
-            # union_fn=lambda a, b: exp_smax(a, -b),
-            # union_fn=lambda a, b: jnp.maximum(a, -b),
-            ignore_levels=6,
-        )(p)
+    feature_grid = hk.transform(
+        lambda pts, scale_factor: FeatureGrid(
+            64,
+            create_decoder_fn(),
+            grid_min=grid_min,
+            grid_max=grid_max,
+            feature_size=feature_size,
+        )(pts, scale_factor)
     )
 
     fit(
-        scene,
+        feature_grid,
         subrng[1],
-        3.0,
-        # *get_model("../data/stanford-bunny.obj"),
-        *get_model("../data/bunny_watertight.xyz"),
+        1.0,
+        *get_model("../data/stanford-bunny.obj"),
+        # *get_model("../data/bunny_watertight.xyz"),
         visualization_hook=visualization_hook,
-        batch_size=2 ** 16,
-        lr=1e-4,
+        # batch_size=2 ** 13,
+        lr=1e-3,
         num_epochs=10001,
     )
 
@@ -110,39 +110,13 @@ def visualization_hook(
     grid_min=jnp.array([-1.0, -1.0, -1.0]),
     grid_max=jnp.array([1.0, 1.0, 1.0]),
 ):
-    num_scene_fns = len(scene_fn(params, jnp.zeros((3,)))[1])
-    for level in range(num_scene_fns):
-        print("num_scene_fns", num_scene_fns)
-        scene_fn_level = lambda pt: scene_fn(params, pt)[1][level]
-        create_mrc(
-            f"test_{level}.mrc",
-            scene_fn_level,
-            grid_min,
-            grid_max,
-            64,
-        )
-
     create_mrc(
         "test.mrc",
-        lambda pt: scene_fn(params, pt)[0][0],
+        lambda pts: scene_fn(params, pts),
         grid_min,
         grid_max,
         64,
     )
-    """lt.clf()
-
-    points, normals = np.array(points), np.array(normals)
-    ax = plt.subplot(projection="3d")
-    ax.quiver(
-        points[::512, 0],
-        points[::512, 1],
-        points[::512, 2],
-        points[::512, 0],
-        points[::512, 1],
-        points[::512, 2],
-        length=0.1,
-        normalize=True,
-    )"""
 
 
 if __name__ == "__main__":

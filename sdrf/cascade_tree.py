@@ -228,7 +228,7 @@ class LayerSphereInitializer(hk.initializers.Initializer):
         )
 
 
-def downsample_static(base_mipmap, scale_factor) -> jnp.ndarray:
+def downsample(base_mipmap, scale_factor) -> jnp.ndarray:
     resolution, dims = base_mipmap.shape[0], base_mipmap.ndim - 1
 
     # round down to the nearest odd kernel size
@@ -266,27 +266,25 @@ def n_dimensional_interpolation(cs, alpha):
     return (1 - alpha[0]) * a + alpha[0] * b
 
 
-class MipMap(hk.Module):
+class FeatureGrid(hk.Module):
     def __init__(
         self,
-        create_decoder_fn,
         resolution,
-        scale_factor: float,
+        decoder_fn,
         grid_min=jnp.array([-1.0, -1.0]),
         grid_max=jnp.array([1.0, 1.0]),
         feature_size=128,
         feature_initializer_fn=sphere_init,
     ):
-        super(MipMap, self).__init__()
+        super(FeatureGrid, self).__init__()
         self.dimensions = grid_min.shape[0]
         self.resolution = resolution
-        self.scale_factor = scale_factor
         self.dims = tuple(self.resolution for _ in range(self.dimensions))
         self.sample_locs = jnp.array(
             tuple(itertools.product(range(2), repeat=self.dimensions))
         )
         self.sample_locs = self.sample_locs.reshape((2,) * self.dimensions + (-1,))
-        self.create_decoder_fn = create_decoder_fn
+        self.decoder_fn = decoder_fn
 
         self.num_levels = int(math.log2(self.resolution))
 
@@ -302,64 +300,32 @@ class MipMap(hk.Module):
             init=LayerSphereInitializer(self.grid_min, self.grid_max),
         )
 
-    def __call__(
-        self,
-        pt: jnp.ndarray,
-    ):
-        alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
-        decoder_fn = self.create_decoder_fn()
+    def __call__(self, pts, scale_factor):
+        mipmap = downsample(self.base_features, scale_factor)
+        # mipmap = self.base_features
 
-        # feature_map = downsample_static(self.base_features, self.scale_factor)
-        feature_map = self.base_features
+        def interpolate(pt):
+            alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
 
-        # lattice point interpolation, not grid
-        idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
-        idx = idx_f.astype(jnp.int32)
-        idx_alpha = jnp.modf(idx_f)[0]
+            # lattice point interpolation, not grid
+            idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
+            idx = idx_f.astype(jnp.int32)
+            idx_alpha = jnp.modf(idx_f)[0]
 
-        # TODO: is the clipping even needed anymore?
-        xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
-        cs = vmap(lambda x: feature_map[tuple(x)])(
-            xs.reshape(-1, self.dimensions)
-        ).reshape(xs.shape[:-1] + (self.feature_size,))
-        pt_feature = n_dimensional_interpolation(cs, idx_alpha)
+            # TODO: is the clipping even needed anymore?
+            xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
+            cs = vmap(lambda x: mipmap[tuple(x)])(
+                xs.reshape(-1, self.dimensions)
+            ).reshape(xs.shape[:-1] + (self.feature_size,))
+            pt_feature = n_dimensional_interpolation(cs, idx_alpha)
 
-        return decoder_fn(pt_feature)
+            # return decoder_fn(pt_feature)
+            return pt_feature
 
-
-class CascadeTree(hk.Module):
-    def __init__(self, highest_mipmap, union_fn=exp_smin, ignore_levels=2):
-        super(CascadeTree, self).__init__()
-        self.highest_mipmap = highest_mipmap
-        self.union_fn = union_fn
-
-        self.resolution = highest_mipmap.resolution
-        self.mipmaps_res = [
-            2 ** i
-            for i in range(ignore_levels, math.floor(math.log2(self.resolution)) + 1)
-        ]
-        # Create downsampled mipmaps
-        self.mipmaps = tuple(
-            MipMap(
-                self.highest_mipmap.create_decoder_fn,
-                res,
-                self.highest_mipmap.scale_factor * (res / self.resolution),
-                self.highest_mipmap.grid_min,
-                self.highest_mipmap.grid_max,
-                self.highest_mipmap.feature_size,
-                self.highest_mipmap.feature_initializer_fn,
+        return vmap(
+            lambda pt: self.decoder_fn(
+                interpolate(
+                    pt,
+                )
             )
-            for res in self.mipmaps_res
-        )
-
-    def __call__(self, pt: jnp.ndarray):
-        csg_levels = [mipmap(pt) for mipmap in self.mipmaps]
-
-        samples = [
-            reduce(self.union_fn, csg_levels[: len(self.mipmaps) - i])
-            for i in range(len(self.mipmaps))
-        ]
-        print("samples len", len(samples))
-        # samples = [mip_levels[-1]]
-
-        return samples, csg_levels
+        )(pts)

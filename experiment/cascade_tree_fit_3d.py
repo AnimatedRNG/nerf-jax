@@ -91,7 +91,10 @@ def main():
         def init(pts, scale_factor):
             return grid.sample(grid(scale_factor), pts)
 
-        return init, (grid, grid.sample)
+        return init, (
+            grid,
+            lambda mipmap, pts: jax.vmap(lambda pt: grid.sample(mipmap, pt))(pts),
+        )
 
     feature_grid = hk.multi_transform(feature_grid_fns)
 

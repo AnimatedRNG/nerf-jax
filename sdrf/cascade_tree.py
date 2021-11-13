@@ -303,29 +303,19 @@ class FeatureGrid(hk.Module):
     def __call__(self, scale_factor):
         return downsample(self.base_features, scale_factor)
 
-    def sample(self, mipmap, pts):
-        def interpolate(pt):
-            alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
+    def sample(self, mipmap, pt):
+        alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
 
-            # lattice point interpolation, not grid
-            idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
-            idx = idx_f.astype(jnp.int32)
-            idx_alpha = jnp.modf(idx_f)[0]
+        # lattice point interpolation, not grid
+        idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)
+        idx = idx_f.astype(jnp.int32)
+        idx_alpha = jnp.modf(idx_f)[0]
 
-            # TODO: is the clipping even needed anymore?
-            xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
-            cs = vmap(lambda x: mipmap[tuple(x)])(
-                xs.reshape(-1, self.dimensions)
-            ).reshape(xs.shape[:-1] + (self.feature_size,))
-            pt_feature = n_dimensional_interpolation(cs, idx_alpha)
+        # TODO: is the clipping even needed anymore?
+        xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
+        cs = vmap(lambda x: mipmap[tuple(x)])(xs.reshape(-1, self.dimensions)).reshape(
+            xs.shape[:-1] + (self.feature_size,)
+        )
+        pt_feature = n_dimensional_interpolation(cs, idx_alpha)
 
-            # return decoder_fn(pt_feature)
-            return pt_feature
-
-        return vmap(
-            lambda pt: self.decoder_fn(
-                interpolate(
-                    pt,
-                )
-            )
-        )(pts)
+        return self.decoder_fn(pt_feature)

@@ -300,10 +300,10 @@ class FeatureGrid(hk.Module):
             init=LayerSphereInitializer(self.grid_min, self.grid_max),
         )
 
-    def __call__(self, pts, scale_factor):
-        mipmap = downsample(self.base_features, scale_factor)
-        # mipmap = self.base_features
+    def __call__(self, scale_factor):
+        return downsample(self.base_features, scale_factor)
 
+    def sample(self, mipmap, pts):
         def interpolate(pt):
             alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
 

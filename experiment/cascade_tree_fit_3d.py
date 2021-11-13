@@ -79,15 +79,21 @@ def main():
     grid_min = jnp.array([-1.0, -1.0, -1.0])
     grid_max = jnp.array([1.0, 1.0, 1.0])
 
-    feature_grid = hk.transform(
-        lambda pts, scale_factor: FeatureGrid(
+    def feature_grid_fns():
+        grid = FeatureGrid(
             64,
             create_decoder_fn(),
             grid_min=grid_min,
             grid_max=grid_max,
             feature_size=feature_size,
-        )(pts, scale_factor)
-    )
+        )
+
+        def init(pts, scale_factor):
+            return grid.sample(grid(scale_factor), pts)
+
+        return init, (grid, grid.sample)
+
+    feature_grid = hk.multi_transform(feature_grid_fns)
 
     fit(
         feature_grid,

@@ -69,7 +69,7 @@ def cosine_similarity(a, b, eps=1e-8):
 
 
 def fit(
-    feature_grid,
+    scene,
     rng,
     initial_scale_factor,
     model_vertices,
@@ -81,37 +81,39 @@ def fit(
     num_epochs=100000,
     visualization_epochs=200,
 ):
-    params = feature_grid.init(rng, jnp.ones([model_vertices.shape[-1]]), 1.0)
-    scene = hk.without_apply_rng(feature_grid)
+    params = scene.init(rng, jnp.ones([model_vertices.shape[-1]]), 1.0)
+
+    def scene_fn(params, pts, scale_factor):
+        downsample, point_sample = scene.apply
+        mipmap = downsample(params, None, scale_factor)
+        return point_sample(params, None, mipmap, pts)
 
     init_adam, update, get_params = adam(lambda _: lr)
     optimizer_state = init_adam(params)
 
     def loss_fn(pts, off_surface_pts, sdfs, params, scale_factor, rng):
-        scene_fn = lambda params, pts: scene.apply(params, pts, scale_factor)
-
-        def reconstruction_loss_fn(pt, sdf, params):
-            model_output = scene_fn(params, pt)
+        def reconstruction_loss_fn(pt, sdf):
+            model_output = scene_fn(params, pt, scale_factor)
 
             return jnp.sum((model_output - sdf) ** 2)
 
-        def eikonal_loss_fn(pt, params):
-            samples, grad_fn = vjp(lambda pts: scene_fn(params, pts), pts)
+        def eikonal_loss_fn(pt):
+            samples, grad_fn = vjp(lambda pts: scene_fn(params, pts, scale_factor), pts)
             grad_sample = grad_fn(jnp.ones_like(samples))[0]
 
             grad_sample = jnp.where(jnp.abs(grad_sample) < 1e-6, 1e-6, grad_sample)
 
             return (1.0 - (jnp.linalg.norm(grad_sample))) ** 2.0
 
-        def laplacian_loss_fn(pt, params):
-            model_output = scene_fn(params, pt)
+        def laplacian_loss_fn(pt):
+            model_output = scene_fn(params, pt, scale_factor)
             return (1 - model_output) * jnp.exp(-1e2 * jnp.abs(model_output))
 
-        reconstruction_losses = reconstruction_loss_fn(pts, sdfs, params).sum()
+        reconstruction_losses = reconstruction_loss_fn(pts, sdfs).sum()
 
-        eikonal_losses = eikonal_loss_fn(pts, params).sum()
+        eikonal_losses = eikonal_loss_fn(pts).sum()
 
-        laplacian_losses = laplacian_loss_fn(pts, params).sum()
+        laplacian_losses = laplacian_loss_fn(pts).sum()
 
         # losses = (reconstruction_losses, normal_losses)
         losses = (reconstruction_losses, eikonal_losses, laplacian_losses)
@@ -149,10 +151,10 @@ def fit(
         scale_factor = step_size * decay_rate ** (epoch / decay_steps)
 
         if epoch % visualization_epochs == 0:
-            scene_fn = lambda params, pt: scene.apply(params, pt, scale_factor)
+            scene_fn_vis = lambda params, pt: scene_fn(params, pt, scale_factor)
             drawnow(
                 lambda: visualization_hook(
-                    scene_fn, model_vertices, model_normals, params
+                    scene_fn_vis, model_vertices, model_normals, params
                 )
             )
 

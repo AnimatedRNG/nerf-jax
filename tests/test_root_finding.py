@@ -5,7 +5,12 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap, grad
 
-from sdrf import sphere_trace_naive, sphere_trace, sphere_trace_batched
+from sdrf import (
+    sphere_trace_naive,
+    sphere_trace,
+    sphere_trace_batched,
+    sphere_trace_custom_root,
+)
 
 
 def create_sphere(pt, origin=jnp.array([0.0, 0.0, 0.0]), radius=2.0):
@@ -28,6 +33,7 @@ def perform_radius_test(fn, initial_radius, target_radius):
 
     for i in range(100):
         params[1] = params[1] - grad_program(params[0], params[1])[0] * lr
+        print(params)
 
     assert abs(radius_fwd(*params) - target_radius) < 1e-3
 
@@ -58,6 +64,19 @@ def test_sphere_trace():
     perform_radius_test(fn, 2.0, 3.0)
 
 
+def test_sphere_trace_custom_root():
+    ro = jnp.array([-4.0, 0.0, -1.0])
+    rd = jnp.array([1.0, 0.0, 0.0])
+
+    truncation_dist = 1.0
+
+    fn = lambda origin, radius: sphere_trace_custom_root(
+        create_sphere, ro, rd, 0.0, truncation_dist, origin, radius
+    )
+
+    perform_radius_test(fn, 2.0, 3.0)
+
+
 def test_sphere_trace_iso():
     ro = jnp.array([-4.0, 0.0, -1.0])
     rd = jnp.array([1.0, 0.0, 0.0])
@@ -65,6 +84,22 @@ def test_sphere_trace_iso():
     truncation_dist = 1.0
 
     fn = lambda iso: lambda origin, radius: sphere_trace(
+        create_sphere, ro, rd, iso, truncation_dist, origin, radius
+    )
+
+    # will re-jit, but that's because of the nested call
+    # in general, won't re-jit on different isosurface values
+    for i in range(5):
+        perform_radius_test(fn(i / 5.0), 2.0, 3.0)
+
+
+def test_sphere_trace_custom_root_iso():
+    ro = jnp.array([-4.0, 0.0, -1.0])
+    rd = jnp.array([1.0, 0.0, 0.0])
+
+    truncation_dist = 1.0
+
+    fn = lambda iso: lambda origin, radius: sphere_trace_custom_root(
         create_sphere, ro, rd, iso, truncation_dist, origin, radius
     )
 
@@ -146,7 +181,7 @@ def test_depth_accumulation():
 
         xs = jnp.linspace(-1e-2, 1e-2, num_iters)
         pts = vmap(
-            lambda iso: sphere_trace(
+            lambda iso: sphere_trace_custom_root(
                 create_sphere,
                 ro,
                 rd,

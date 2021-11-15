@@ -170,6 +170,31 @@ def sphere_trace_depth_rev_paper(sdf, res, g):
     # return (None, None, None, None, *out_vjp_params)
 
 
+def sphere_trace_custom_root(sdf, ro, rd, iso, truncation, *params):
+    depth_output = sphere_trace_depth_custom_root(sdf, ro, rd, iso, truncation, *params)
+    return depth_output * rd + ro
+
+
+def sphere_trace_depth_custom_root(sdf, ro, rd, iso, truncation, *params):
+    # a little bit awkward, but keeps everything scalar
+    pt_to_depth = lambda pt: ((pt - ro) / rd)[..., 0]
+    solver = lambda sdf_depth, depth: sphere_trace_depth(
+        lambda pt, *params: sdf_depth(pt_to_depth(pt)),
+        ro + depth * rd,
+        rd,
+        iso,
+        truncation,
+        *params
+    )
+
+    return jax.lax.custom_root(
+        lambda depth: sdf(ro + depth * rd, *params) - iso,
+        0.0,
+        solver,
+        lambda g, y: y / g(1.0),
+    )
+
+
 sphere_trace_depth.defvjp(sphere_trace_depth_fwd, sphere_trace_depth_rev_paper)
 sphere_trace_depth_batched.defvjp(
     sphere_trace_depth_batched_fwd, sphere_trace_depth_batched_rev

@@ -45,8 +45,10 @@ def generate_initialization(config, batch_size, num_epochs, validation_skip, lr,
             skip_connect_every=config.network.skip_connect_every,
             geometric_init=False,
         )(
-            positional_encoding(x, config.network.num_encoding_fn_xyz),
-            positional_encoding(jnp.zeros_like(x), config.network.num_encoding_fn_dir),
+            x,
+            jnp.zeros_like(x),
+            # positional_encoding(x, config.network.num_encoding_fn_xyz),
+            # positional_encoding(jnp.zeros_like(x), config.network.num_encoding_fn_dir),
             mode=NeRFModelMode.BOTH,
         )[
             1

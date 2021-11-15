@@ -83,7 +83,7 @@ class ConvolutionalSDF(hk.Module):
         return vmap(sample_pt)(pts), feature_map
 
 
-def eikonal_loss(x: jnp.ndarray):
+'''def eikonal_loss(x: jnp.ndarray):
     """
     :param x is [x_dim, y_dim, z_dim] sdf grid
     """
@@ -108,4 +108,4 @@ def eikonal_loss(x: jnp.ndarray):
         for axis in range(x.ndim)
     )
 
-    return 1 - jnp.sqrt(sum(df_di) ** 2.0).ravel()
+    return 1 - jnp.sqrt(sum(df_di) ** 2.0).ravel()'''

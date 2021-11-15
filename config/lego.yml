@@ -68,15 +68,19 @@ sdrf:
     linear:
       support: 5.0E-2
     stratified:
-      support: 5.0E-2
+      support: 1.0E-1
     gaussian:
       sigma: 5.0E-2
   render:
     phi:
-      initial_sigma: 5.0E-2
+      initial_sigma: 1.0E-1
       #lr_decay: 250
       lr_decay: 2
       lr_decay_factor: 0.1
+    scale_factor:
+      initial_sigma: 1.0
+      lr_decay: 3
+      lr_decay_factor: 0.9
     num_samples: 8
     truncation_distance: 10.0
     additive: True
@@ -85,7 +89,7 @@ sdrf:
     oryx_debug: False
   model:
     network:
-      weight_file: "experiment/sphere_nerf_penc.pkl"
+      weight_file: "experiment/sphere_nerf.pkl"
       num_layers: 8
       hidden_size: 128
       skip_connect_every: 3

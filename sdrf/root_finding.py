@@ -22,8 +22,8 @@ def sphere_trace_naive(sdf, ro, rd, iterations, truncation, *params):
     return p
 
 
-def sphere_trace(sdf, ro, rd, iso, truncation, *params):
-    depth_output = sphere_trace_depth(sdf, ro, rd, iso, truncation, *params)
+def sphere_trace(sdf, ro, rd, iso, truncation):
+    depth_output = sphere_trace_depth(sdf, ro, rd, iso, truncation)
     return depth_output * rd + ro
 
 
@@ -110,9 +110,7 @@ def sphere_trace_depth_batched_rev(sdf, res, g):
     return (None, None, None, None, *vjp_params(u))
 
 
-# @functools.partial(jit, static_argnums=(0,))
-@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-def sphere_trace_depth(sdf, ro, rd, iso, truncation, *params):
+def sphere_trace_depth_fwd(sdf, ro, rd, iso, truncation):
     scalarize = lambda x: x.sum()
 
     def cond_fun(carry):
@@ -124,78 +122,34 @@ def sphere_trace_depth(sdf, ro, rd, iso, truncation, *params):
         old_dist, old_depth, iteration, old_pt = carry
         depth = scalarize((old_depth + old_dist))
         pt = depth * rd + ro
-        dist = sdf(pt, *params) - iso
+        dist = sdf(pt) - iso
         dist = jnp.minimum(jnp.abs(dist), truncation) * jnp.sign(dist)
         return (dist, depth, iteration + 1, pt)
 
-    _, depth, _, _ = jax.lax.while_loop(
-        cond_fun, body_fun, (sdf(ro, *params) - iso, 0.0, 0, ro)
-    )
+    _, depth, _, _ = jax.lax.while_loop(cond_fun, body_fun, (sdf(ro) - iso, 0.0, 0, ro))
 
     return depth
 
 
-def sphere_trace_depth_fwd(sdf, ro, rd, iso, truncation, *params):
-    depth = sphere_trace_depth(sdf, ro, rd, iso, truncation, *params)
-
-    # return depth, (depth, *params)
-    return depth, (ro, rd, iso, truncation, depth, *params)
-
-
-# as described in (Niemeyer, et al. 2020)
-def sphere_trace_depth_rev_paper(sdf, res, g):
-    ro, rd, iso, truncation, depth, *params = res
-
-    pt = depth * rd + ro
-
-    vjp_p = grad(sdf, argnums=(0,))
-
-    dp = vjp_p(pt, *params)[0]
-
-    u = (-1.0 / (dp @ rd.T)) * g
-
-    validity = jnp.abs(sdf(pt, *params) - iso) < 1e-3
-
-    _, vjp_params = vjp(functools.partial(sdf, pt), *params)
-
-    # mask output by validity?
-    """out_vjp_params = [
-        tree_map(
-            lambda param: jax.lax.select(validity, param, jnp.zeros_like(param)),
-            vjp_param,
-        )
-        for vjp_param in vjp_params(u)
-    ]"""
-    return (None, None, None, None, *vjp_params(u))
-    # return (None, None, None, None, *out_vjp_params)
-
-
-def sphere_trace_custom_root(sdf, ro, rd, iso, truncation, *params):
-    depth_output = sphere_trace_depth_custom_root(sdf, ro, rd, iso, truncation, *params)
-    return depth_output * rd + ro
-
-
-def sphere_trace_depth_custom_root(sdf, ro, rd, iso, truncation, *params):
+def sphere_trace_depth(sdf, ro, rd, iso, truncation):
     # a little bit awkward, but keeps everything scalar
     pt_to_depth = lambda pt: ((pt - ro) / rd)[..., 0]
-    solver = lambda sdf_depth, depth: sphere_trace_depth(
-        lambda pt, *params: sdf_depth(pt_to_depth(pt)),
+    solver = lambda sdf_depth, depth: sphere_trace_depth_fwd(
+        lambda pt: sdf_depth(pt_to_depth(pt)),
         ro + depth * rd,
         rd,
         iso,
         truncation,
-        *params
     )
 
     return jax.lax.custom_root(
-        lambda depth: sdf(ro + depth * rd, *params) - iso,
+        lambda depth: sdf(ro + depth * rd).sum() - iso,
         0.0,
         solver,
         lambda g, y: y / g(1.0),
     )
 
 
-sphere_trace_depth.defvjp(sphere_trace_depth_fwd, sphere_trace_depth_rev_paper)
 sphere_trace_depth_batched.defvjp(
     sphere_trace_depth_batched_fwd, sphere_trace_depth_batched_rev
 )

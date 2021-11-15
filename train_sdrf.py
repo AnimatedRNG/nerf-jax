@@ -25,7 +25,11 @@ from util import get_ray_bundle, gradient_visualization, serialize_box
 from sdrf import (
     SDRFParams,
     SDRF,
+    SDRFGrid,
     Siren,
+    IGR,
+    DumbDecoder,
+    FeatureGrid,
     extract_debug,
     run_one_iter_of_sdrf,
     eikonal_loss,
@@ -36,6 +40,67 @@ Losses = namedtuple("Losses", ["rgb_loss", "eikonal_loss", "manifold_loss"])
 register_pytree_node(Losses, lambda xs: (tuple(xs), None), lambda _, xs: Losses(*xs))
 
 
+def init_feature_grids(config, rng):
+    def feature_grid_fns():
+        create_geometry_fn = lambda: IGR(
+            [
+                16,
+            ],
+            skip_in=tuple(),
+            beta=100.0,
+        )
+        create_appearance_fn = lambda: DumbDecoder(
+            [16, 16, 3],
+        )
+        grid = FeatureGrid(
+            64,
+            lambda x, *args: (
+                create_geometry_fn()(x),
+                create_appearance_fn()(x, *args) if len(tuple(args)) > 0 else None,
+            ),
+            grid_min=jnp.array([-1.0, -1.0, -1.0]),
+            grid_max=jnp.array([1.0, 1.0, 1.0]),
+            feature_size=16,
+        )
+
+        def init(pt, scale_factor):
+            return grid.sample(grid(scale_factor), pt, [pt])
+
+        return init, (
+            grid,
+            grid.sample,
+        )
+
+    feature_grid = hk.multi_transform(feature_grid_fns)
+
+    params = feature_grid.init(
+        rng,
+        jnp.ones(
+            [
+                3,
+            ]
+        ),
+        1.0,
+    )
+
+    downsample, point_sample = feature_grid.apply
+
+    return (
+        SDRFGrid(
+            downsample=lambda params, scale_factor: downsample(
+                params, None, scale_factor
+            ),
+            geometry=lambda mipmap, pt, params: point_sample(params, None, mipmap, pt)[
+                0
+            ],
+            appearance=lambda mipmap, pt, rd, params: point_sample(
+                params, None, mipmap, pt, [rd]
+            )[1],
+        ),
+        SDRFParams(geometry=params, appearance=params),
+    )
+
+
 def init_networks(config, rng):
     geometry_fn = hk.transform(
         lambda x: FlexibleNeRFModel(
@@ -44,8 +109,8 @@ def init_networks(config, rng):
             skip_connect_every=config.network.skip_connect_every,
             geometric_init=False,
         )(
-            positional_encoding(x, config.network.num_encoding_fn_xyz),
-            #x,
+            # positional_encoding(x, config.network.num_encoding_fn_xyz),
+            x,
             None,
             mode=NeRFModelMode.GEOMETRY,
         )
@@ -57,10 +122,10 @@ def init_networks(config, rng):
             skip_connect_every=config.network.skip_connect_every,
             geometric_init=False,
         )(
-            positional_encoding(x, config.network.num_encoding_fn_xyz),
-            positional_encoding(view, config.network.num_encoding_fn_dir),
-            #x,
-            #view,
+            # positional_encoding(x, config.network.num_encoding_fn_xyz),
+            # positional_encoding(view, config.network.num_encoding_fn_dir),
+            x,
+            view,
             mode=NeRFModelMode.APPEARANCE,
         )
     )
@@ -129,12 +194,13 @@ def train_sdrf(config):
     rng = jax.random.PRNGKey(config.experiment.seed)
     rng, *subrng = jax.random.split(rng, 3)
 
-    sdrf, sdrf_params = init_networks(config.sdrf.model, subrng)
+    # sdrf, sdrf_params = init_networks(config.sdrf.model, subrng)
     # with open("experiment/sphere_nerf.pkl", "rb") as pkl:
     # with open("experiment/sphere_nerf_penc.pkl", "rb") as pkl:
-    with open(config.sdrf.model.network.weight_file, "rb") as pkl:
+    """with open(config.sdrf.model.network.weight_file, "rb") as pkl:
         g_a_params = pickle.load(pkl)
-        sdrf_params = SDRFParams(geometry=g_a_params, appearance=g_a_params)
+        sdrf_params = SDRFParams(geometry=g_a_params, appearance=g_a_params)"""
+    sdrf, sdrf_params = init_feature_grids(config.sdrf.model, subrng[1])
 
     basedir = config.dataset.basedir
     print(f"Loading images/poses from {basedir}...")
@@ -171,7 +237,7 @@ def train_sdrf(config):
 
     config = serialize_box("SDRFConfig", config)
 
-    def loss_fn(subrng, params, image_id, iteration):
+    def loss_fn(subrng, params, sdrf_model, scale_factor, image_id, iteration):
         uv, ray_origins, ray_directions, target_s = sampler(
             images["train"][image_id],
             poses["train"][image_id],
@@ -209,21 +275,33 @@ def train_sdrf(config):
 
         # render
         rgb, depth = run_one_iter_of_sdrf(
-            sdrf,
+            sdrf_model,
             params,
             uv,
             ray_origins,
             ray_directions,
+            scale_factor,
             iteration,
             config.sdrf,
             subrng[3],
         )
 
+        if isinstance(sdrf_model, SDRFGrid):
+            downsampled = sdrf_model.downsample(params.geometry, scale_factor)
+            sdrf = SDRF(
+                geometry=lambda pt: sdrf_model.geometry(
+                    downsampled, pt, params.geometry
+                ),
+                appearance=lambda pt, rd: sdrf_model.appearance(
+                    downsampled, pt, rd, params.appearance
+                ),
+            )
+
         rgb_loss = jnp.mean(((target_s[..., :3] - rgb) ** 2.0).flatten())
 
         e_loss, m_loss = (
-            eikonal_loss(sdrf.geometry, eikonal_samples, params.geometry),
-            manifold_loss(sdrf.geometry, manifold_samples, params.geometry),
+            eikonal_loss(sdrf.geometry, eikonal_samples),
+            manifold_loss(sdrf.geometry, manifold_samples),
         )
 
         losses = Losses(rgb_loss=rgb_loss, eikonal_loss=e_loss, manifold_loss=m_loss)
@@ -236,8 +314,7 @@ def train_sdrf(config):
 
         return jnp.dot(jnp.array([rgb_loss, e_loss, m_loss]), loss_weights), losses
 
-    @jit
-    def validation(subrng, params, image_id, iteration):
+    def validation(subrng, params, sdrf, scale_factor, image_id, iteration):
         H, W, focal = (
             intrinsics["val"].height,
             intrinsics["val"].width,
@@ -258,6 +335,7 @@ def train_sdrf(config):
             uv.reshape(-1, 3),
             ray_origins.reshape(-1, 3),
             ray_directions.reshape(-1, 3),
+            scale_factor,
             iteration,
             config.sdrf,
             subrng[3],
@@ -265,12 +343,16 @@ def train_sdrf(config):
 
         return rgb.reshape(H, W, 3), depth.reshape(H, W, 1)
 
-    value_and_grad_fn = jit(value_and_grad(loss_fn, argnums=(1,), has_aux=True))
+    value_and_grad_fn = jit(
+        value_and_grad(loss_fn, argnums=(1,), has_aux=True), static_argnums=(2,)
+    )
+    # value_and_grad_fn = value_and_grad(loss_fn, argnums=(1,), has_aux=True)
     if config.sdrf.render.oryx_debug:
         reap_fn = jit(
             core.reap(value_and_grad(loss_fn, argnums=(1,), has_aux=True), tag="vjp")
         )
     sdf_jit_fn = jit(lambda pts, ps: vmap(lambda pt: sdrf.geometry(pt, ps))(pts))
+    validation = jit(validation, static_argnums=(2,))
 
     height, width = intrinsics["val"].height, intrinsics["val"].width
 
@@ -278,8 +360,15 @@ def train_sdrf(config):
         rng, *subrng = jax.random.split(rng, 5)
         params = get_params(optimizer_state)
 
+        num_decay_steps_scale_factor = config.sdrf.render.scale_factor.lr_decay * 1000
+        scale_factor = (
+            config.sdrf.render.scale_factor.initial_sigma
+            * config.sdrf.render.scale_factor.lr_decay_factor
+            ** (i / num_decay_steps_scale_factor)
+        )
+
         (loss, losses), (grads,) = value_and_grad_fn(
-            subrng, params, train_image_seq[i], i
+            subrng, params, sdrf, scale_factor, train_image_seq[i], i
         )
         # grads = clip_grads(grads, 1.0)
 
@@ -302,8 +391,8 @@ def train_sdrf(config):
                 log_debug_imgs(writer, reap_dict, height, width, i)
 
             start = time.time()
-            rgb, depth = validation(subrng, params, 0, i)
-            # rgb, depth = validation(subrng, params, train_image_seq[i], i)
+            rgb, depth = validation(subrng, params, sdrf, scale_factor, 0, i)
+            # rgb, depth = validation(subrng, params, sdrf, train_image_seq[i], i)
             end = time.time()
 
             to_img = lambda x: np.array(

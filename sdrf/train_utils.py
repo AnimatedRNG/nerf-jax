@@ -13,6 +13,8 @@ from .rendering import (
     StratifiedSampler,
     GaussianSampler,
     ExponentialSampler,
+    SDRF,
+    SDRFGrid,
     gaussian_pdf,
     render,
     find_intersections,
@@ -21,7 +23,7 @@ from .rendering import (
 from util import map_batched_tuple, map_batched_rng
 
 
-def eikonal_loss(sdf, pts, sdf_params):
+"""def eikonal_loss(sdf, pts, sdf_params):
     # TODO: Rewrite this, this is clunky
     sdf_grad = lambda pt: grad(lambda pt, paras: sdf(pt, paras).sum(), argnums=(0,))(
         pt, sdf_params
@@ -35,11 +37,32 @@ def eikonal_loss(sdf, pts, sdf_params):
 def manifold_loss(sdf, pts, sdf_params):
     return jnp.mean(
         vmap(lambda pt: jnp.exp(-1e2 * jnp.abs(sdf(pt, sdf_params))))(pts), axis=0
+    )"""
+
+
+def eikonal_loss(sdf, pts):
+    # TODO: Rewrite this, this is clunky
+    sdf_grad = lambda pt: grad(lambda pt: sdf(pt).sum(), argnums=(0,))(pt)
+    return jnp.mean(
+        vmap(lambda pt: (1.0 - jnp.linalg.norm(sdf_grad(pt))) ** 2.0)(pts),
+        axis=0,
     )
 
 
+def manifold_loss(sdf, pts):
+    return jnp.mean(vmap(lambda pt: jnp.exp(-1e2 * jnp.abs(sdf(pt).sum())))(pts), axis=0)
+
+
 def run_one_iter_of_sdrf(
-    model, params, uv, ray_origins, ray_directions, iteration, options, rng
+    model,
+    params,
+    uv,
+    ray_origins,
+    ray_directions,
+    scale_factor,
+    iteration,
+    options,
+    rng,
 ):
     # reshape ro/rd
     ro = ray_origins.reshape((-1, 3))
@@ -63,18 +86,29 @@ def run_one_iter_of_sdrf(
     sigma = options.render.phi.initial_sigma * options.render.phi.lr_decay_factor ** (
         iteration / num_decay_steps
     )
+
     phi = lambda dist, s: gaussian_pdf(jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, s)
     # phi = lambda dist, s: gaussian_pdf(dist, 0.0, s)
 
+    if isinstance(model, SDRFGrid):
+        downsampled = model.downsample(params.geometry, scale_factor)
+        sdrf_model = SDRF(
+            geometry=lambda pt: model.geometry(downsampled, pt, params.geometry),
+            appearance=lambda pt, rd: model.appearance(
+                downsampled, pt, rd, params.appearance
+            ),
+        )
+    else:
+        sdrf_model = model
+
     render_fn = lambda uv, ro, rd, xs, depths: render(
-        model.geometry,
-        model.appearance,
+        sdrf_model.geometry,
+        sdrf_model.appearance,
         uv,
         ro,
         rd,
         xs,
         depths,
-        params,
         phi,
         sigma,
         options.render,
@@ -84,10 +118,9 @@ def run_one_iter_of_sdrf(
         (ro, rd),
         lambda ro_, rd_, subrng_: find_intersections(
             sampler,
-            model.geometry,
+            sdrf_model.geometry,
             ro_,
             rd_,
-            params,
             subrng_,
             sigma,
             options.render,
@@ -96,11 +129,11 @@ def run_one_iter_of_sdrf(
         True,
         rng,
     )
-    '''intersections, _ = map_batched_tuple(
+    """intersections, _ = map_batched_tuple(
         (ro, rd),
         lambda ro_, rd_, subrng_: find_intersections_batched(
             sampler,
-            model.geometry,
+            sdrf_model.geometry,
             ro_,
             rd_,
             params,
@@ -111,7 +144,7 @@ def run_one_iter_of_sdrf(
         options.render.chunksize,
         False,
         rng,
-    )'''
+    )"""
     xs, depths = intersections
 
     outputs = map_batched_tuple(

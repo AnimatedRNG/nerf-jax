@@ -91,10 +91,10 @@ class StratifiedSampler(object):
         return 1.0 / (support * 2.0)
 
 
-def find_intersections(sampler, sdf, ro, rd, params, rng, sigma, options):
+def find_intersections(sampler, sdf, ro, rd, rng, sigma, options):
     xs = sampler.sample(rng, options.num_samples, sigma)
     intersect = lambda iso: sphere_trace_depth(
-        sdf, ro, rd, iso, options.truncation_distance, params.geometry
+        sdf, ro, rd, iso, options.truncation_distance
     )
 
     depths = vmap(intersect)(xs)
@@ -118,9 +118,7 @@ def find_intersections_batched(sampler, sdf, ro, rd, params, rng, sigma, options
     return xs, depths
 
 
-def nerf_integrate(
-        sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
-):
+def nerf_integrate(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, options):
     inds = jnp.argsort(depths, axis=0)
 
     sorted_depths = jnp.take_along_axis(depths, inds, axis=0)
@@ -155,15 +153,13 @@ def nerf_integrate(
 
 
 @functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-def integrate(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options):
+def integrate(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, options):
     return integrate_fwd(
-        sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
+        sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, options
     )[0]
 
 
-def integrate_fwd(
-    sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
-):
+def integrate_fwd(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, options):
     # Convert the ray depths from earlier into points
     pts = vmap(lambda depth: ro + rd * depth)(depths)
 
@@ -381,26 +377,36 @@ def integrate_rev(sdf, res, rendered_attrib_g):
         grad_attribs,
         grad_phi_x,
         None,
-        None,
     )
 
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
-def masked_sdf(sdf, valid, pt, params):
-    return masked_sdf_fwd(sdf, valid, pt, params)[0]
+def masked_sdf(sdf, valid, pt):
+    return masked_sdf_fwd(sdf, valid, pt)[0]
 
 
-def masked_sdf_fwd(sdf, valid, pt, params):
+def masked_sdf_fwd(sdf, valid, pt):
     return (
-        valid * sdf(pt, params.geometry),
-        (valid, pt, params),
+        valid * sdf(pt),
+        (valid, pt),
+    )
+
+
+"""@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
+def masked_sdf(sdf, valid, pt):
+    return masked_sdf_fwd(sdf, valid, pt)[0]
+
+
+def masked_sdf_fwd(sdf, valid, pt):
+    return (
+        valid * sdf(pt),
+        (valid, pt),
     )
 
 
 def masked_sdf_rev(sdf, res, g):
-    valid, pt, params = res
+    valid, pt = res
 
-    _, vjp_fun = vjp(lambda p, ps: sdf(p, ps.geometry), pt, params)
+    _, vjp_fun = vjp(sdf, pt)
 
     grads_input = vjp_fun(g)
 
@@ -415,28 +421,31 @@ def masked_sdf_rev(sdf, res, g):
     return (None, *grads_input)
 
 
-def render(sdf, appearance, uv, ro, rd, xs, depths, params, phi, sigma, options):
+masked_sdf.defvjp(masked_sdf_fwd, masked_sdf_rev)"""
+
+
+def render(sdf, appearance, uv, ro, rd, xs, depths, phi, sigma, options):
     if options.oryx_debug:
         import oryx
         import oryx.core as core
 
     pts = vmap(lambda depth: ro + rd * depth)(depths)
 
-    intensity = lambda pt: jnp.clip(appearance(pt, rd, params.appearance), 0.0, 1.0)
+    intensity = lambda pt: jnp.clip(appearance(pt, rd), 0.0, 1.0)
     depth = lambda depth: depth
 
     # Mask that determines if a given sphere tracing attempt had
     # suceeded or failed
-    error = vmap(lambda pt, x: jnp.abs(sdf(pt, params.geometry) - x))(pts, xs)
+    error = vmap(lambda pt, x: jnp.abs(sdf(pt) - x))(pts, xs)
     valid_mask = error < 1e-2
     valid_mask = jnp.reshape(valid_mask, (-1, 1))
 
-    phi_x = vmap(lambda pt, valid: phi(masked_sdf(sdf, valid, pt, params), sigma))(
+    phi_x = vmap(lambda pt, valid: phi(masked_sdf(sdf, valid, pt), sigma))(
         pts, valid_mask[:, 0]
     )
     phi_x = phi_x.reshape(-1, 1)
 
-    attribs = (
+    """attribs = (
         vmap(
             lambda pt, valid: jax.lax.cond(
                 valid,
@@ -455,8 +464,8 @@ def render(sdf, appearance, uv, ro, rd, xs, depths, params, phi, sigma, options)
                 lambda depths_i: jnp.zeros_like(depth(depths_i)),
             )
         )(depths, valid_mask[:, 0]),
-    )
-    # attribs = (vmap(intensity)(pts), vmap(depth)(depths))
+    )"""
+    attribs = (vmap(intensity)(pts), vmap(depth)(depths))
 
     # fetch the sdf values if requested
     debug_attribs = [depths] if options.isosurfaces_debug else []
@@ -466,9 +475,7 @@ def render(sdf, appearance, uv, ro, rd, xs, depths, params, phi, sigma, options)
 
     output = (
         list(
-            integrate(
-                sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, params, options
-            )
+            integrate(sdf, uv, ro, rd, valid_mask, depths, xs, attribs, phi_x, options)
         )
         + debug_attribs
     )
@@ -524,7 +531,6 @@ def extract_debug(uv, reaped, height, width):
 
 
 integrate.defvjp(integrate_fwd, integrate_rev)
-masked_sdf.defvjp(masked_sdf_fwd, masked_sdf_rev)
 
 SDRFParams = namedtuple("SDRFParams", ["geometry", "appearance"])
 register_pytree_node(
@@ -533,3 +539,8 @@ register_pytree_node(
 
 SDRF = namedtuple("SDRF", ["geometry", "appearance"])
 register_pytree_node(SDRF, lambda xs: (tuple(xs), None), lambda _, xs: SDRF(*xs))
+
+SDRFGrid = namedtuple("SDRFGrid", ["downsample", "geometry", "appearance"])
+register_pytree_node(
+    SDRFGrid, lambda xs: (tuple(xs), None), lambda _, xs: SDRFGrid(*xs)
+)

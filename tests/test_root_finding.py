@@ -9,7 +9,6 @@ from sdrf import (
     sphere_trace_naive,
     sphere_trace,
     sphere_trace_batched,
-    sphere_trace_custom_root,
 )
 
 
@@ -58,20 +57,11 @@ def test_sphere_trace():
     truncation_dist = 1.0
 
     fn = lambda origin, radius: sphere_trace(
-        create_sphere, ro, rd, 0.0, truncation_dist, origin, radius
-    )
-
-    perform_radius_test(fn, 2.0, 3.0)
-
-
-def test_sphere_trace_custom_root():
-    ro = jnp.array([-4.0, 0.0, -1.0])
-    rd = jnp.array([1.0, 0.0, 0.0])
-
-    truncation_dist = 1.0
-
-    fn = lambda origin, radius: sphere_trace_custom_root(
-        create_sphere, ro, rd, 0.0, truncation_dist, origin, radius
+        lambda pt: create_sphere(pt, origin, radius),
+        ro,
+        rd,
+        0.0,
+        truncation_dist,
     )
 
     perform_radius_test(fn, 2.0, 3.0)
@@ -84,23 +74,7 @@ def test_sphere_trace_iso():
     truncation_dist = 1.0
 
     fn = lambda iso: lambda origin, radius: sphere_trace(
-        create_sphere, ro, rd, iso, truncation_dist, origin, radius
-    )
-
-    # will re-jit, but that's because of the nested call
-    # in general, won't re-jit on different isosurface values
-    for i in range(5):
-        perform_radius_test(fn(i / 5.0), 2.0, 3.0)
-
-
-def test_sphere_trace_custom_root_iso():
-    ro = jnp.array([-4.0, 0.0, -1.0])
-    rd = jnp.array([1.0, 0.0, 0.0])
-
-    truncation_dist = 1.0
-
-    fn = lambda iso: lambda origin, radius: sphere_trace_custom_root(
-        create_sphere, ro, rd, iso, truncation_dist, origin, radius
+        lambda pt: create_sphere(pt, origin, radius), ro, rd, iso, truncation_dist
     )
 
     # will re-jit, but that's because of the nested call
@@ -181,7 +155,7 @@ def test_depth_accumulation():
 
         xs = jnp.linspace(-1e-2, 1e-2, num_iters)
         pts = vmap(
-            lambda iso: sphere_trace_custom_root(
+            lambda iso: sphere_trace(
                 create_sphere,
                 ro,
                 rd,

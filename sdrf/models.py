@@ -188,8 +188,8 @@ class DumbDecoder(hk.Module):
         super().__init__(name=name)
         self.depths = depths
 
-    def __call__(self, coords):
-        x = coords
+    def __call__(self, coords, viewdir):
+        x = jnp.concatenate([coords, viewdir], axis=-1)
         for depth in self.depths[:-1]:
             x = hk.Linear(depth)(x)
             x = jax.nn.relu(x)

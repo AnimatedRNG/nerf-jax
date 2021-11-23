@@ -8,7 +8,7 @@ import functools
 from .nerf_helpers import cumprod_exclusive
 
 
-#@functools.partial(jit, static_argnums=(4, 5))
+# @functools.partial(jit, static_argnums=(4, 5))
 def volume_render_radiance_field(
     radiance_field,
     depth_values,
@@ -30,7 +30,11 @@ def volume_render_radiance_field(
     rgb = jax.nn.sigmoid(radiance_field[..., :3])
     if radiance_field_noise_std > 0.0:
         noise = (
-            jax.random.normal(rng, radiance_field[..., 3].shape, jnp.float32,)
+            jax.random.normal(
+                rng,
+                radiance_field[..., 3].shape,
+                jnp.float32,
+            )
             * radiance_field_noise_std
         )
     else:

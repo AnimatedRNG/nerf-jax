@@ -16,7 +16,18 @@ def test_flexible_nerf_model():
     l = np.random.random(1)[0]
 
     key = hk.PRNGSequence(42)
-    net = hk.transform(lambda x: FlexibleNeRFModel()(x))
+    net = hk.transform(
+        lambda x: jnp.concatenate(
+            FlexibleNeRFModel(
+                num_layers=4,
+                hidden_size=128,
+                skip_connect_every=4,
+                num_encoding_fn_xyz=6,
+                num_encoding_fn_dir=4,
+            )(x[..., :28], x[..., 28:]),
+            axis=-1,
+        )
+    )
     params = net.init(next(key), jnp.array(x))
 
     params = jax.tree_util.tree_map(lambda v: jnp.ones_like(v) * l, params)
@@ -60,7 +71,7 @@ def test_torch_to_jax():
     )
 
     def recursive_compare(d1, d2):
-        assert(d1.keys() == d2.keys())
+        assert d1.keys() == d2.keys()
         for key in d1.keys():
             if isinstance(d1[key], dict):
                 assert isinstance(d2[key], dict)

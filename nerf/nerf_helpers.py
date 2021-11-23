@@ -12,7 +12,7 @@ def positional_encoding(tensor, num_encoding_functions):
     frequency_bands = 2.0 ** jnp.linspace(
         0.0,
         num_encoding_functions - 1,
-        #2 ** (num_encoding_functions - 1),
+        # 2 ** (num_encoding_functions - 1),
         num_encoding_functions,
         dtype=jnp.float32,
     )[..., jnp.newaxis]
@@ -29,7 +29,7 @@ def positional_encoding(tensor, num_encoding_functions):
         return tensor
     else:
         return jnp.concatenate((tensor, encoding.flatten()))
-        #return encoding.flatten()
+        # return encoding.flatten()
 
 
 # @jit
@@ -47,7 +47,7 @@ def sample_pdf(bins, weights, num_samples, rng, det):
 
     if det:
         u = jnp.linspace(0.0, 1.0, num_samples)
-        u = jnp.repeat(jnp.expand_dims(u, 0), cdf.shape[:-1], axis=0)
+        u = jnp.repeat(jnp.expand_dims(u, 0), np.array(cdf.shape[:-1]), axis=0)
     else:
         u = jax.random.uniform(rng, list(cdf.shape[:-1]) + [num_samples])
 

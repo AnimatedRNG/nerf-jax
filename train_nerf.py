@@ -61,7 +61,7 @@ def create_networks(config):
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.fine.use_viewdirs,
-            geometric_init=False
+            geometric_init=False,
         )(xyz, view)
     )
 
@@ -305,7 +305,7 @@ def main():
 
     with open(config_args.config, "r") as f:
         config_dictionary = yaml.load(f, Loader=yaml.FullLoader)
-    config = Box(config_dictionary)
+    config = Box(config_dictionary, frozen_box=True, box_it_up=True)
 
     train_nerf(config)
 

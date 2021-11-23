@@ -6,7 +6,7 @@ import functools
 
 from .nerf_helpers import positional_encoding, sample_pdf
 from .volume_render import volume_render_radiance_field
-from util import map_batched, map_batched_rng
+from util import map_batched, map_batched_rng, map_batched_tuple
 
 
 # @functools.partial(jit, static_argnums=(0, 3, 4, 5))
@@ -199,7 +199,7 @@ def run_one_iter_of_nerf(
     if options.use_viewdirs:
         rays = jnp.concatenate((rays, viewdirs), axis=-1)
 
-    render_rays = lambda batch_rng: jnp.concatenate(
+    """render_rays = lambda batch_rng: jnp.concatenate(
         tuple(
             pred
             for pred in predict_and_render_radiance(
@@ -215,7 +215,23 @@ def run_one_iter_of_nerf(
         axis=-1,
     )
 
-    images, rng = map_batched_rng(rays, render_rays, options.chunksize, False, rng)
+    images, rng = map_batched_rng(rays, render_rays, options.chunksize, False, rng)"""
+    images, rng = map_batched_tuple(
+        (rays,),
+        lambda rays_, subrng_: jnp.concatenate(
+            tuple(
+                pred
+                for pred in predict_and_render_radiance(
+                    rays_, model_coarse, model_fine, options, model_options, rng
+                )
+                if pred is not None
+            ),
+            axis=-1,
+        ),
+        options.chunksize,
+        False,
+        rng,
+    )
 
     if validation:
         return rng, images.reshape(ray_directions.shape[:-1] + (10,))

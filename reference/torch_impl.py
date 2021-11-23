@@ -25,7 +25,7 @@ SOFTWARE.
 
 import numpy as np
 import torch
-import torchsearchsorted
+#import torchsearchsorted
 
 
 def positional_encoding_torch(
@@ -76,8 +76,7 @@ def positional_encoding_torch(
 def get_embedding_function_torch(
     num_encoding_functions=6, include_input=True, log_sampling=True
 ):
-    r"""Returns a lambda function that internally calls positional_encoding.
-    """
+    r"""Returns a lambda function that internally calls positional_encoding."""
     return lambda x: positional_encoding_torch(
         x, num_encoding_functions, include_input, log_sampling
     )

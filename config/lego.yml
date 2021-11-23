@@ -35,13 +35,13 @@ nerf:
       num_encoding_fn_dir: 4
     optimizer:
       initial_lr: 5.0E-3
-      lr_decay: 25
+      lr_decay: 250
       lr_decay_factor: 0.1
   train:
     use_viewdirs: True
     num_random_rays: 1024
     chunksize: 16192 # 16192
-    perturb: True
+    perturb: False
     num_coarse: 64
     num_fine: 64
     white_background: False

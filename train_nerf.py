@@ -45,24 +45,25 @@ def create_networks(config):
     )
 
     model_coarse = hk.transform(
-        lambda xyz, view: FlexibleNeRFModel(
+        lambda x: FlexibleNeRFModel(
             num_encoding_fn_xyz=config.nerf.model.coarse.num_encoding_fn_xyz,
             num_encoding_fn_dir=config.nerf.model.coarse.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.coarse.use_viewdirs,
-        )(xyz, view)
+            # geometric_init=False,
+        )(x)
     )
 
     model_fine = hk.transform(
-        lambda xyz, view: FlexibleNeRFModel(
+        lambda x: FlexibleNeRFModel(
             num_encoding_fn_xyz=config.nerf.model.fine.num_encoding_fn_xyz,
             num_encoding_fn_dir=config.nerf.model.fine.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.fine.use_viewdirs,
-            geometric_init=False,
-        )(xyz, view)
+            # geometric_init=False,
+        )(x)
     )
 
     return (
@@ -73,7 +74,7 @@ def create_networks(config):
     )
 
 
-def init_networks(
+"""def init_networks(
     rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
 ):
     dummy_input_coarse_xyz, dummy_input_coarse_dir = (
@@ -89,6 +90,18 @@ def init_networks(
         rng[0], dummy_input_coarse_xyz, dummy_input_coarse_dir
     )
     fine_params = model_fine.init(rng[1], dummy_input_fine_xyz, dummy_input_fine_dir)
+
+    return (coarse_params, fine_params)"""
+
+
+def init_networks(
+    rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
+):
+    dummy_input_coarse = jnp.zeros((config.nerf.train.chunksize, sum(coarse_embedding)))
+    dummy_input_fine = jnp.zeros((config.nerf.train.chunksize, sum(fine_embedding)))
+
+    coarse_params = model_coarse.init(rng[0], dummy_input_coarse)
+    fine_params = model_fine.init(rng[1], dummy_input_fine)
 
     return (coarse_params, fine_params)
 
@@ -157,7 +170,9 @@ def train_nerf(config):
         dtype=jnp.uint32,
     )
 
-    def loss_fn(f_rng, cp, fp, image_id):
+    def loss_fn(f_rng, ps, image_id):
+        cp, fp = ps
+
         H, W, focal = (
             intrinsics["train"].height,
             intrinsics["train"].width,
@@ -201,10 +216,15 @@ def train_nerf(config):
         if config.nerf.train.num_fine > 0:
             fine_loss = jnp.mean(((target_s[..., :3] - rgb_fine) ** 2.0).flatten())
             loss = loss + fine_loss
-        return loss, Losses(coarse_loss=coarse_loss, fine_loss=fine_loss)
+            losses = Losses(coarse_loss=coarse_loss, fine_loss=fine_loss)
+        else:
+            losses = Losses(coarse_loss=coarse_loss, fine_loss=0.0)
+        return loss, losses
 
     @jit
-    def validation(f_rng, cp, fp, image_id):
+    def validation(f_rng, ps, image_id):
+        cp, fp = ps
+
         H, W, focal = (
             intrinsics["val"].height,
             intrinsics["val"].width,
@@ -233,7 +253,7 @@ def train_nerf(config):
             True,
         )
 
-        rgb_coarse, _, _, rgb_fine, _, _ = (
+        rgb_coarse, disp_coarse, _, rgb_fine, disp_fine, _ = (
             rendered_images[..., :3],
             rendered_images[..., 3:4],
             rendered_images[..., 4:5],
@@ -242,7 +262,7 @@ def train_nerf(config):
             rendered_images[..., 9:10],
         )
 
-        return rgb_coarse, rgb_fine
+        return rgb_coarse, disp_coarse, rgb_fine, disp_fine
 
     @jit
     def update_loop(rng, optimizer_state, start, num_iterations):
@@ -251,13 +271,13 @@ def train_nerf(config):
 
             rng, *subrng = jax.random.split(rng, 3)
 
-            (model_coarse_params, model_fine_params) = get_params(optimizer_state)
+            ps = get_params(optimizer_state)
 
-            (_, losses), (cp_grad, fp_grad) = value_and_grad(
-                loss_fn, argnums=(1, 2), has_aux=True
-            )(subrng, model_coarse_params, model_fine_params, train_image_seq[i])
+            (_, losses), ps_grad = value_and_grad(loss_fn, argnums=(1,), has_aux=True)(
+                subrng, ps, train_image_seq[i]
+            )
 
-            optimizer_state = update(i, (cp_grad, fp_grad), optimizer_state)
+            optimizer_state = update(i, ps_grad[0], optimizer_state)
 
             return rng, optimizer_state, losses
 
@@ -287,7 +307,9 @@ def train_nerf(config):
 
         if i % config.experiment.validate_every == 0:
             start = time.time()
-            rgb_coarse, rgb_fine = validation(rng, *get_params(optimizer_state), 0)
+            rgb_coarse, disp_coarse, rgb_fine, disp_fine = validation(
+                rng, get_params(optimizer_state), 0
+            )
             end = time.time()
 
             to_img = lambda x: np.array(
@@ -295,7 +317,14 @@ def train_nerf(config):
             ).astype(np.uint8)
 
             writer.add_image("validation/rgb_coarse", to_img(rgb_coarse), i)
-            writer.add_image("validation/rgb_fine", to_img(rgb_fine), i)
+            writer.add_image(
+                "validation/disp_coarse", to_img(disp_coarse.repeat(3, axis=-1)), i
+            )
+            if config.nerf.validation.num_fine > 0:
+                writer.add_image("validation/rgb_fine", to_img(rgb_fine), i)
+                writer.add_image(
+                    "validation/disp_fine", to_img(disp_fine.repeat(3, axis=-1)), i
+                )
 
 
 def main():

@@ -33,14 +33,15 @@ def run_network(
     embedded = jnp.concatenate((embedded, embedded_dirs), axis=-1)
 
     # if options.use_viewdirs:
-    fused_fn = lambda x: jnp.concatenate(
+    """fused_fn = lambda x: jnp.concatenate(
         network_fn(x[..., :dim_xyz], x[..., dim_xyz:]), axis=-1
-    )
+    )"""
     # else:
     #    fused_fn = lambda x: jnp.concatenate(
     #        network_fn(x[..., :dim_xyz], None), axis=-1
     #    )
-    radiance_field = map_batched(embedded, fused_fn, chunksize, False)
+    # radiance_field = map_batched(embedded, fused_fn, chunksize, False)
+    radiance_field = map_batched(embedded, network_fn, chunksize, False)
 
     radiance_field = radiance_field.reshape(
         list(pts.shape[:-1]) + [radiance_field.shape[-1]]
@@ -118,7 +119,7 @@ def predict_and_render_radiance(
             subrng,
             not options.perturb,
         )
-        # jax.lax.stop_gradient(z_samples)
+        z_samples = jax.lax.stop_gradient(z_samples)
 
         z_vals = jax.lax.sort(
             jnp.concatenate((z_vals, z_samples), axis=-1), dimension=-1
@@ -199,23 +200,6 @@ def run_one_iter_of_nerf(
     if options.use_viewdirs:
         rays = jnp.concatenate((rays, viewdirs), axis=-1)
 
-    """render_rays = lambda batch_rng: jnp.concatenate(
-        tuple(
-            pred
-            for pred in predict_and_render_radiance(
-                batch_rng[0],
-                model_coarse,
-                model_fine,
-                options,
-                model_options,
-                batch_rng[1],
-            )
-            if pred is not None
-        ),
-        axis=-1,
-    )
-
-    images, rng = map_batched_rng(rays, render_rays, options.chunksize, False, rng)"""
     images, rng = map_batched_tuple(
         (rays,),
         lambda rays_, subrng_: jnp.concatenate(
@@ -234,6 +218,9 @@ def run_one_iter_of_nerf(
     )
 
     if validation:
-        return rng, images.reshape(ray_directions.shape[:-1] + (10,))
+        if options.num_fine > 0:
+            return rng, images.reshape(ray_directions.shape[:-1] + (10,))
+        else:
+            return rng, images.reshape(ray_directions.shape[:-1] + (5,))
     else:
         return rng, images

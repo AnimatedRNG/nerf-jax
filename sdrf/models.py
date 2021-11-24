@@ -183,15 +183,26 @@ class Siren(hk.Module):
         return x
 
 
+def dumb_decoder_linear(size):
+    return hk.Linear(
+        size,
+        w_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+        b_init=hk.initializers.VarianceScaling(1.0, "fan_in", "uniform"),
+    )
+
+
 class DumbDecoder(hk.Module):
     def __init__(self, depths, name=None):
         super().__init__(name=name)
         self.depths = depths
 
     def __call__(self, coords, viewdir):
-        x = jnp.concatenate([coords, viewdir], axis=-1)
+        x = jnp.concatenate(
+            [coords, dumb_decoder_linear(coords.shape[-1])(viewdir)], axis=-1
+        )
         for depth in self.depths[:-1]:
-            x = hk.Linear(depth)(x)
+            x = dumb_decoder_linear(depth)(x)
             x = jax.nn.relu(x)
 
-        return hk.Linear(self.depths[-1])(x)
+        rgb = dumb_decoder_linear(self.depths[-1])(x)
+        return rgb

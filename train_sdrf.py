@@ -58,8 +58,8 @@ def init_feature_grids(config, rng):
                 create_geometry_fn()(x),
                 create_appearance_fn()(x, *args) if len(tuple(args)) > 0 else None,
             ),
-            grid_min=jnp.array([-1.0, -1.0, -1.0]),
-            grid_max=jnp.array([1.0, 1.0, 1.0]),
+            grid_min=jnp.array([-2.0, -2.0, -2.0]),
+            grid_max=jnp.array([2.0, 2.0, 2.0]),
             feature_size=16,
         )
 
@@ -273,19 +273,6 @@ def train_sdrf(config):
             * config.sdrf.manifold.scale
         )
 
-        # render
-        rgb, depth = run_one_iter_of_sdrf(
-            sdrf_model,
-            params,
-            uv,
-            ray_origins,
-            ray_directions,
-            scale_factor,
-            iteration,
-            config.sdrf,
-            subrng[3],
-        )
-
         if isinstance(sdrf_model, SDRFGrid):
             downsampled = sdrf_model.downsample(params.geometry, scale_factor)
             sdrf = SDRF(
@@ -297,12 +284,26 @@ def train_sdrf(config):
                 ),
             )
 
+        # render
+        rgb, depth = run_one_iter_of_sdrf(
+            sdrf,
+            params,
+            uv,
+            ray_origins,
+            ray_directions,
+            scale_factor,
+            iteration,
+            config.sdrf,
+            subrng[3],
+        )
+
         rgb_loss = jnp.mean(((target_s[..., :3] - rgb) ** 2.0).flatten())
 
         e_loss, m_loss = (
             eikonal_loss(sdrf.geometry, eikonal_samples),
             manifold_loss(sdrf.geometry, manifold_samples),
         )
+        e_loss, m_loss = jnp.zeros_like(e_loss), jnp.zeros_like(m_loss)
 
         losses = Losses(rgb_loss=rgb_loss, eikonal_loss=e_loss, manifold_loss=m_loss)
 
@@ -314,7 +315,7 @@ def train_sdrf(config):
 
         return jnp.dot(jnp.array([rgb_loss, e_loss, m_loss]), loss_weights), losses
 
-    def validation(subrng, params, sdrf, scale_factor, image_id, iteration):
+    def validation(subrng, params, sdrf_model, scale_factor, image_id, iteration):
         H, W, focal = (
             intrinsics["val"].height,
             intrinsics["val"].width,
@@ -328,6 +329,17 @@ def train_sdrf(config):
             # poses["val"][0][:3, :4].astype(np.float32),
             poses["val"][image_id][:3, :4].astype(np.float32),
         )
+
+        if isinstance(sdrf_model, SDRFGrid):
+            downsampled = sdrf_model.downsample(params.geometry, scale_factor)
+            sdrf = SDRF(
+                geometry=lambda pt: sdrf_model.geometry(
+                    downsampled, pt, params.geometry
+                ),
+                appearance=lambda pt, rd: sdrf_model.appearance(
+                    downsampled, pt, rd, params.appearance
+                ),
+            )
 
         rgb, depth = run_one_iter_of_sdrf(
             sdrf,
@@ -346,7 +358,7 @@ def train_sdrf(config):
     value_and_grad_fn = jit(
         value_and_grad(loss_fn, argnums=(1,), has_aux=True), static_argnums=(2,)
     )
-    # value_and_grad_fn = value_and_grad(loss_fn, argnums=(1,), has_aux=True)
+    value_and_grad_fn = value_and_grad(loss_fn, argnums=(1,), has_aux=True)
     if config.sdrf.render.oryx_debug:
         reap_fn = jit(
             core.reap(value_and_grad(loss_fn, argnums=(1,), has_aux=True), tag="vjp")

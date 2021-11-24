@@ -17,6 +17,7 @@ from .rendering import (
     SDRFGrid,
     gaussian_pdf,
     render,
+    dumb_render,
     find_intersections,
     find_intersections_batched,
 )
@@ -50,7 +51,9 @@ def eikonal_loss(sdf, pts):
 
 
 def manifold_loss(sdf, pts):
-    return jnp.mean(vmap(lambda pt: jnp.exp(-1e2 * jnp.abs(sdf(pt).sum())))(pts), axis=0)
+    return jnp.mean(
+        vmap(lambda pt: jnp.exp(-1e2 * jnp.abs(sdf(pt).sum())))(pts), axis=0
+    )
 
 
 def run_one_iter_of_sdrf(
@@ -90,18 +93,10 @@ def run_one_iter_of_sdrf(
     phi = lambda dist, s: gaussian_pdf(jnp.maximum(dist, jnp.zeros_like(dist)), 0.0, s)
     # phi = lambda dist, s: gaussian_pdf(dist, 0.0, s)
 
-    if isinstance(model, SDRFGrid):
-        downsampled = model.downsample(params.geometry, scale_factor)
-        sdrf_model = SDRF(
-            geometry=lambda pt: model.geometry(downsampled, pt, params.geometry),
-            appearance=lambda pt, rd: model.appearance(
-                downsampled, pt, rd, params.appearance
-            ),
-        )
-    else:
-        sdrf_model = model
+    sdrf_model = model
+    rng, subrng = jax.random.split(rng, 2)
 
-    render_fn = lambda uv, ro, rd, xs, depths: render(
+    """render_fn = lambda uv, ro, rd, xs, depths: render(
         sdrf_model.geometry,
         sdrf_model.appearance,
         uv,
@@ -129,29 +124,28 @@ def run_one_iter_of_sdrf(
         True,
         rng,
     )
-    """intersections, _ = map_batched_tuple(
-        (ro, rd),
-        lambda ro_, rd_, subrng_: find_intersections_batched(
-            sampler,
-            sdrf_model.geometry,
-            ro_,
-            rd_,
-            params,
-            subrng_,
-            sigma,
-            options.render,
-        ),
-        options.render.chunksize,
-        False,
-        rng,
-    )"""
     xs, depths = intersections
+    """
 
-    outputs = map_batched_tuple(
-        (uv, ro, rd, xs, depths),
-        render_fn,
-        options.render.chunksize,
-        True,
+    volsdf_psi = lambda dist, _: jax.lax.cond(
+        (dist <= 0.0)[0],
+        dist,
+        lambda x: 0.5 * jnp.exp(x / 1e-3),
+        dist,
+        lambda x: 1 - 0.5 * jnp.exp(-x / 1e-3),
     )
+    volsdf_phi = lambda dist, s: 1e3 * volsdf_psi(-dist, s)
+
+    dumb_render_fn = lambda ro, rd: dumb_render(
+        sdrf_model.geometry,
+        sdrf_model.appearance,
+        ro,
+        rd,
+        volsdf_phi,
+        sigma,
+        subrng,
+        options.render,
+    )
+    outputs = vmap(dumb_render_fn)(ro, rd)
 
     return outputs

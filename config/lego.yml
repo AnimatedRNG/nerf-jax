@@ -2,7 +2,7 @@ experiment:
   seed: 42
   train_iters: 200000
   jit_loop: 1
-  validate_every: 10
+  validate_every: 100
   save_every: 5000
   print_every: 100
 dataset:
@@ -43,7 +43,7 @@ nerf:
     chunksize: 16192 # 16192
     perturb: False
     num_coarse: 64
-    num_fine: 64
+    num_fine: 1024
     white_background: False
     radiance_field_noise_std: 0.2
     lindisp: False
@@ -52,7 +52,7 @@ nerf:
     chunksize: 16192 # 16192
     perturb: False
     num_coarse: 64
-    num_fine: 64
+    num_fine: 1024
     white_background: False
     radiance_field_noise_std: 0.
     lindisp: False

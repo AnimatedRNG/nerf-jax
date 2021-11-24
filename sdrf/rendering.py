@@ -13,6 +13,7 @@ from jax.experimental.host_callback import id_tap, id_print
 
 from util import map_batched_rng
 from .root_finding import sphere_trace, sphere_trace_depth, sphere_trace_depth_batched
+from nerf import volume_render_radiance_field
 
 
 def cumprod_exclusive(tensor):
@@ -422,6 +423,27 @@ def masked_sdf_rev(sdf, res, g):
 
 
 masked_sdf.defvjp(masked_sdf_fwd, masked_sdf_rev)"""
+
+
+def dumb_render(sdf, appearance, ro, rd, phi, sigma, rng, options):
+    ts = jnp.linspace(2.0, 6.0, 10)
+    pts = vmap(lambda t: ro + t * rd)(ts)
+
+    intensity = lambda pt: jnp.clip(appearance(pt, rd), 0.0, 1.0)
+    phi_x = vmap(lambda pt: phi(sdf(pt), sigma))(pts)
+    intensities = vmap(intensity)(pts)
+
+    rgba = jnp.concatenate([intensities, phi_x], axis=-1)
+
+    (
+        rgb_coarse,
+        disp_coarse,
+        acc_coarse,
+        weights,
+        depth_coarse,
+    ) = volume_render_radiance_field(rgba, ts, rd, rng, 0.2, True)
+
+    return (rgb_coarse, disp_coarse[..., None])
 
 
 def render(sdf, appearance, uv, ro, rd, xs, depths, phi, sigma, options):

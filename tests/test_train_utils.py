@@ -54,7 +54,7 @@ def test_run_network():
 
     assert np.allclose(np.array(jax_result), torch_result.detach().numpy(), atol=1e-7)
 
-    '''jax_fn = (
+    """jax_fn = (
         lambda pt, rb, p: run_network(
             functools.partial(net_jax.apply, p), pt, rb, 32, 6, 4
         )
@@ -63,4 +63,4 @@ def test_run_network():
     )
 
     dx = jit(grad(jax_fn, argnums=(0, 1, 2)))(pts_jax, ray_batch_jax, jax_params)
-    print(dx)'''
+    print(dx)"""

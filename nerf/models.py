@@ -203,18 +203,18 @@ class FlexibleNeRFModel(hk.Module):
         self.include_input_dir = include_input_dir
         self.use_viewdirs = use_viewdirs
 
-    def __call__(self, x):
+    def __call__(self, xyz, view):
         dim_xyz, dim_dir = compute_embedding_size(
             self.include_input_xyz,
             self.include_input_dir,
             self.num_encoding_fn_xyz,
             self.num_encoding_fn_dir,
         )
-        if not self.use_viewdirs:
+        '''if not self.use_viewdirs:
             dim_dir = 0
             xyz = x[..., : self.dim_xyz]
         else:
-            xyz, view = x[..., :dim_xyz], x[..., dim_xyz:]
+            xyz, view = x[..., :dim_xyz], x[..., dim_xyz:]'''
 
         x = linear(self.hidden_size, name="layer1")(xyz)
 
@@ -233,6 +233,6 @@ class FlexibleNeRFModel(hk.Module):
                 linear(self.hidden_size // 2, name="layers_dir__{}".format(0))(x)
             )
             rgb = linear(3, name="fc_rgb")(x)
-            return jnp.concatenate((rgb, alpha), axis=-1)
+            return (rgb, alpha)
         else:
             return linear(4, name="fc_out")(x)

@@ -40,7 +40,7 @@ nerf:
   train:
     use_viewdirs: True
     num_random_rays: 1024
-    chunksize: 16192 # 16192
+    chunksize: 131072 # 16192
     perturb: False
     num_coarse: 64
     num_fine: 128

@@ -44,8 +44,12 @@ def manifold_loss(sdf, pts, sdf_params):
 def eikonal_loss(sdf, pts):
     # TODO: Rewrite this, this is clunky
     sdf_grad = lambda pt: grad(lambda pt: sdf(pt).sum(), argnums=(0,))(pt)
+    grad_samples = vmap(sdf_grad)(pts)[0]
+    grad_samples = jnp.where(jnp.abs(grad_samples) < 1e-6, 1e-6, grad_samples)
     return jnp.mean(
-        vmap(lambda pt: (1.0 - jnp.linalg.norm(sdf_grad(pt))) ** 2.0)(pts),
+        vmap(lambda grad_sample: (1.0 - jnp.linalg.norm(grad_sample)) ** 2.0)(
+            grad_samples
+        ),
         axis=0,
     )
 

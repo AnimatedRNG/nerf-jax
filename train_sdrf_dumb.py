@@ -22,12 +22,22 @@ from tqdm import tqdm, trange
 from nerf import loader, sampler
 from nerf import run_one_iter_of_nerf, run_network
 from nerf import FlexibleNeRFModel, compute_embedding_size
-from sdrf import SDRFGrid, SDRFParams, FeatureGrid, IGR, DumbDecoder
+from sdrf import (
+    SDRFGrid,
+    SDRFParams,
+    FeatureGrid,
+    IGR,
+    DumbDecoder,
+    eikonal_loss,
+    manifold_loss,
+)
 from reference import torch_to_jax
 from util import get_ray_bundle, create_mrc
 
 
-Losses = namedtuple("Losses", ["coarse_loss", "fine_loss"])
+Losses = namedtuple(
+    "Losses", ["coarse_loss", "fine_loss", "eikonal_loss", "manifold_loss"]
+)
 register_pytree_node(Losses, lambda xs: (tuple(xs), None), lambda _, xs: Losses(*xs))
 
 
@@ -49,8 +59,10 @@ def init_feature_grids(config, rng):
                 create_geometry_fn()(x),
                 create_appearance_fn()(x, *args) if len(tuple(args)) > 0 else None,
             ),
-            grid_min=jnp.array([-2.0, -2.0, -2.0]),
-            grid_max=jnp.array([2.0, 2.0, 2.0]),
+            # grid_min=jnp.array([-2.0, -2.0, -2.0]),
+            # grid_max=jnp.array([2.0, 2.0, 2.0]),
+            grid_min=jnp.array([-1.5, -1.5, -1.5]),
+            grid_max=jnp.array([1.5, 1.5, 1.5]),
             feature_size=16,
         )
 
@@ -177,7 +189,7 @@ def train_nerf(config):
     sdrf, ps = init_feature_grids(config, rng)
 
     def scene_fn(i, downsampled, ps, pt, view, sdf=False):
-        sigma = 1e-1 * (0.1 ** (i / 5000))
+        sigma = 1e-1 * (0.01 ** (i / 200000))
         volsdf_psi = lambda dist: jax.lax.cond(
             (dist <= 0.0)[0],
             dist,
@@ -246,6 +258,17 @@ def train_nerf(config):
         )
 
         downsampled = sdrf.downsample(ps.geometry, 0.1)
+        scene_fn_e = functools.partial(scene_fn, i, downsampled, ps)
+        scene_fn_sdf = lambda pt: scene_fn(
+            i,
+            downsampled,
+            ps,
+            pt,
+            jnp.ones(
+                3,
+            ),
+            sdf=True,
+        )[1]
 
         _, rendered_images = run_one_iter_of_nerf(
             H,
@@ -253,8 +276,8 @@ def train_nerf(config):
             focal,
             # functools.partial(model_coarse.apply, cp),
             # functools.partial(model_fine.apply, fp),
-            functools.partial(scene_fn, i, downsampled, ps),
-            functools.partial(scene_fn, i, downsampled, ps),
+            scene_fn_e,
+            scene_fn_e,
             ray_origins,
             ray_directions,
             config.nerf.train,
@@ -262,6 +285,21 @@ def train_nerf(config):
             config.dataset.projection,
             f_rng[1],
             False,
+        )
+
+        eikonal_samples = (
+            jax.random.uniform(f_rng[2], (config.sdrf.eikonal.num_samples, 3))
+            * config.sdrf.eikonal.scale
+        )
+
+        manifold_samples = (
+            jax.random.uniform(f_rng[3], (config.sdrf.manifold.num_samples, 3))
+            * config.sdrf.manifold.scale
+        )
+
+        e_loss, m_loss = (
+            eikonal_loss(scene_fn_sdf, eikonal_samples),
+            manifold_loss(scene_fn_sdf, manifold_samples),
         )
 
         rgb_coarse, _, _, rgb_fine, _, _ = (
@@ -273,14 +311,27 @@ def train_nerf(config):
             rendered_images[..., 9:10],
         )
 
+        # weights = (3e3, 1e2, 5e1)
+        weights = (3e3, 1e2, 1e-9)
+
         coarse_loss = jnp.mean(((target_s[..., :3] - rgb_coarse) ** 2.0).flatten())
-        loss = coarse_loss
+        loss = coarse_loss * weights[0] + e_loss * weights[1] + m_loss * weights[2]
         if config.nerf.train.num_fine > 0:
             fine_loss = jnp.mean(((target_s[..., :3] - rgb_fine) ** 2.0).flatten())
-            loss = loss + fine_loss
-            losses = Losses(coarse_loss=coarse_loss, fine_loss=fine_loss)
+            loss = loss + fine_loss * weights[0]
+            losses = Losses(
+                coarse_loss=coarse_loss,
+                fine_loss=fine_loss,
+                eikonal_loss=e_loss,
+                manifold_loss=m_loss,
+            )
         else:
-            losses = Losses(coarse_loss=coarse_loss, fine_loss=0.0)
+            losses = Losses(
+                coarse_loss=coarse_loss,
+                fine_loss=0.0,
+                eikonal_loss=e_loss,
+                manifold_loss=m_loss,
+            )
         return loss, losses
 
     @jit
@@ -335,7 +386,7 @@ def train_nerf(config):
         def inner(i, rng_optimizer_state):
             rng, optimizer_state, _ = rng_optimizer_state
 
-            rng, *subrng = jax.random.split(rng, 3)
+            rng, *subrng = jax.random.split(rng, 5)
 
             ps = get_params(optimizer_state)
 
@@ -351,7 +402,13 @@ def train_nerf(config):
             start,
             start + num_iterations,
             inner,
-            (rng, optimizer_state, Losses(coarse_loss=0.0, fine_loss=0.0)),
+            (
+                rng,
+                optimizer_state,
+                Losses(
+                    coarse_loss=0.0, fine_loss=0.0, eikonal_loss=0.0, manifold_loss=0.0
+                ),
+            ),
         )
 
     for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
@@ -370,6 +427,8 @@ def train_nerf(config):
         writer.add_scalar("train/loss", loss, i)
         writer.add_scalar("train/coarse_loss", losses.coarse_loss, i)
         writer.add_scalar("train/fine_loss", losses.fine_loss, i)
+        writer.add_scalar("train/eikonal_loss", losses.eikonal_loss, i)
+        writer.add_scalar("train/manifold_loss", losses.manifold_loss, i)
 
         if i % config.experiment.validate_every == 0:
             start = time.time()
@@ -379,21 +438,24 @@ def train_nerf(config):
             end = time.time()
 
             downsampled = sdrf.downsample(ps.geometry, 0.1)
+            ps = get_params(optimizer_state)
             '''create_mrc(
                 str(logdir / "test.mrc"),
-                lambda pt: scene_fn(
-                    i,
-                    downsampled,
-                    get_params(optimizer_state),
-                    pt,
-                    jnp.ones(
-                        3,
-                    ),
-                    sdf=True,
-                )[1],
+                jax.vmap(
+                    lambda pt: scene_fn(
+                        i,
+                        downsampled,
+                        ps,
+                        pt,
+                        jnp.ones(
+                            3,
+                        ),
+                        sdf=False,
+                    )[1]
+                ),
                 grid_min=jnp.array([-2.0, -2.0, -2.0]),
                 grid_max=jnp.array([2.0, 2.0, 2.0]),
-                resolution=64,
+                resolution=256,
             )'''
 
             to_img = lambda x: np.array(

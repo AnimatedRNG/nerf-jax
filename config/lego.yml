@@ -43,7 +43,7 @@ nerf:
     chunksize: 16192 # 16192
     perturb: False
     num_coarse: 64
-    num_fine: 1024
+    num_fine: 128
     white_background: False
     radiance_field_noise_std: 0.2
     lindisp: False
@@ -52,7 +52,7 @@ nerf:
     chunksize: 16192 # 16192
     perturb: False
     num_coarse: 64
-    num_fine: 1024
+    num_fine: 128
     white_background: False
     radiance_field_noise_std: 0.
     lindisp: False

@@ -58,10 +58,10 @@ nerf:
     lindisp: False
 sdrf:
   eikonal:
-    scale: 4.0
+    scale: 2.0
     num_samples: 2048
   manifold:
-    scale: 4.0
+    scale: 2.0
     num_samples: 2048
   sampler:
     kind: "stratified"

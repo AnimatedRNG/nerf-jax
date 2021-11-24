@@ -288,12 +288,16 @@ def train_nerf(config):
         )
 
         eikonal_samples = (
-            jax.random.uniform(f_rng[2], (config.sdrf.eikonal.num_samples, 3))
+            jax.random.uniform(
+                f_rng[2], (config.sdrf.eikonal.num_samples, 3), minval=-1.0, maxval=1.0
+            )
             * config.sdrf.eikonal.scale
         )
 
         manifold_samples = (
-            jax.random.uniform(f_rng[3], (config.sdrf.manifold.num_samples, 3))
+            jax.random.uniform(
+                f_rng[3], (config.sdrf.manifold.num_samples, 3), minval=-1.0, maxval=1.0
+            )
             * config.sdrf.manifold.scale
         )
 
@@ -439,7 +443,7 @@ def train_nerf(config):
 
             downsampled = sdrf.downsample(ps.geometry, 0.1)
             ps = get_params(optimizer_state)
-            '''create_mrc(
+            create_mrc(
                 str(logdir / "test.mrc"),
                 jax.vmap(
                     lambda pt: scene_fn(
@@ -456,7 +460,7 @@ def train_nerf(config):
                 grid_min=jnp.array([-2.0, -2.0, -2.0]),
                 grid_max=jnp.array([2.0, 2.0, 2.0]),
                 resolution=256,
-            )'''
+            )
 
             to_img = lambda x: np.array(
                 np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255

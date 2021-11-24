@@ -301,8 +301,8 @@ class FeatureGrid(hk.Module):
         )
 
     def __call__(self, scale_factor):
-        #return downsample(self.base_features, scale_factor)
-        return self.base_features
+        return downsample(self.base_features, scale_factor)
+        # return self.base_features
 
     def sample(self, mipmap, pt, decoder_args=[]):
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)

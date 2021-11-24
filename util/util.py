@@ -299,6 +299,7 @@ def create_mrc(filename, fn, grid_min, grid_max, resolution=256, batch_size=2 **
     sdf = jax.jit(grid_sample, static_argnums=(0, 3))(
         fn, grid_min, grid_max, resolution=resolution
     )[1][..., 0]
+    sdf = np.array(sdf)
 
     with mrcfile.new_mmap(
         filename, overwrite=True, shape=(resolution,) * dimensions, mrc_mode=2

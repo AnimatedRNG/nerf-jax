@@ -20,27 +20,30 @@ def run_network(
 ):
     pts_flat = pts.reshape((-1, pts.shape[-1]))
 
-    # embedded = vmap(lambda x: positional_encoding(x, xyz_encoding_functions))(pts_flat)
+    # nerf config
+    embedded = vmap(lambda x: positional_encoding(x, xyz_encoding_functions))(pts_flat)
 
     viewdirs = ray_batch[..., None, -3:]
     input_dirs = jnp.broadcast_to(viewdirs, pts.shape)
     input_dirs_flat = input_dirs.reshape((-1, input_dirs.shape[-1]))
 
-    """embedded_dirs = vmap(lambda x: positional_encoding(x, view_encoding_functions))(
+    # nerf stuff
+    embedded_dirs = vmap(lambda x: positional_encoding(x, view_encoding_functions))(
         input_dirs_flat
     )
     dim_xyz, dim_dir = embedded.shape[-1], embedded_dirs.shape[-1]
-    embedded = jnp.concatenate((embedded, embedded_dirs), axis=-1)"""
-    embedded = jnp.concatenate((pts_flat, input_dirs_flat), axis=-1)
+    embedded = jnp.concatenate((embedded, embedded_dirs), axis=-1)
+    # sdrf
+    # embedded = jnp.concatenate((pts_flat, input_dirs_flat), axis=-1)
 
-    fused_fn = lambda x: jnp.concatenate(
-        vmap(network_fn)(x[..., :3], x[..., 3:]), axis=-1
-    )
+    #fused_fn = lambda x: jnp.concatenate(
+    #    vmap(network_fn)(x[..., :3], x[..., 3:]), axis=-1
+    #)
 
     # if options.use_viewdirs:
-    # fused_fn = lambda x: jnp.concatenate(
-    #    network_fn(x[..., :dim_xyz], x[..., dim_xyz:]), axis=-1
-    # )
+    fused_fn = lambda x: jnp.concatenate(
+       network_fn(x[..., :dim_xyz], x[..., dim_xyz:]), axis=-1
+    )
     # else:
     #    fused_fn = lambda x: jnp.concatenate(
     #        network_fn(x[..., :dim_xyz], None), axis=-1

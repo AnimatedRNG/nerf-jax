@@ -9,7 +9,7 @@ dataset:
   basedir: data/nerf_synthetic/lego
   filter_chain:
     skiptest: 1
-    downscale: 2
+    downscale: 8
     white_background: False
   sampler:
     num_random_rays: 4096 # 4096

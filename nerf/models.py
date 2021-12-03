@@ -210,11 +210,11 @@ class FlexibleNeRFModel(hk.Module):
             self.num_encoding_fn_xyz,
             self.num_encoding_fn_dir,
         )
-        '''if not self.use_viewdirs:
+        """if not self.use_viewdirs:
             dim_dir = 0
             xyz = x[..., : self.dim_xyz]
         else:
-            xyz, view = x[..., :dim_xyz], x[..., dim_xyz:]'''
+            xyz, view = x[..., :dim_xyz], x[..., dim_xyz:]"""
 
         x = linear(self.hidden_size, name="layer1")(xyz)
 

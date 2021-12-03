@@ -23,7 +23,7 @@ from nerf import loader, sampler
 from nerf import run_one_iter_of_nerf, run_network
 from nerf import FlexibleNeRFModel, compute_embedding_size
 from reference import torch_to_jax
-from util import get_ray_bundle
+from util import get_ray_bundle, img2mse, mse2psnr
 
 
 Losses = namedtuple("Losses", ["coarse_loss", "fine_loss"])
@@ -45,25 +45,25 @@ def create_networks(config):
     )
 
     model_coarse = hk.transform(
-        lambda x: FlexibleNeRFModel(
+        lambda x, view: FlexibleNeRFModel(
             num_encoding_fn_xyz=config.nerf.model.coarse.num_encoding_fn_xyz,
             num_encoding_fn_dir=config.nerf.model.coarse.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.coarse.use_viewdirs,
             # geometric_init=False,
-        )(x)
+        )(x, view)
     )
 
     model_fine = hk.transform(
-        lambda x: FlexibleNeRFModel(
+        lambda x, view: FlexibleNeRFModel(
             num_encoding_fn_xyz=config.nerf.model.fine.num_encoding_fn_xyz,
             num_encoding_fn_dir=config.nerf.model.fine.num_encoding_fn_dir,
             include_input_xyz=True,
             include_input_dir=True,
             use_viewdirs=config.nerf.model.fine.use_viewdirs,
             # geometric_init=False,
-        )(x)
+        )(x, view)
     )
 
     return (
@@ -74,7 +74,7 @@ def create_networks(config):
     )
 
 
-"""def init_networks(
+def init_networks(
     rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
 ):
     dummy_input_coarse_xyz, dummy_input_coarse_dir = (
@@ -91,10 +91,10 @@ def create_networks(config):
     )
     fine_params = model_fine.init(rng[1], dummy_input_fine_xyz, dummy_input_fine_dir)
 
-    return (coarse_params, fine_params)"""
+    return (coarse_params, fine_params)
 
 
-def init_networks(
+"""def init_networks(
     rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
 ):
     dummy_input_coarse = jnp.zeros((config.nerf.train.chunksize, sum(coarse_embedding)))
@@ -103,7 +103,7 @@ def init_networks(
     coarse_params = model_coarse.init(rng[0], dummy_input_coarse)
     fine_params = model_fine.init(rng[1], dummy_input_fine)
 
-    return (coarse_params, fine_params)
+    return (coarse_params, fine_params)"""
 
 
 def load_networks_from_torch(checkpoint_file="./checkpoint/checkpoint199999.ckpt"):
@@ -221,21 +221,21 @@ def train_nerf(config):
             losses = Losses(coarse_loss=coarse_loss, fine_loss=0.0)
         return loss, losses
 
-    @jit
-    def validation(f_rng, ps, image_id):
+    @functools.partial(jit, static_argnums=(3,))
+    def validation(f_rng, ps, image_id, dset_name="val"):
         cp, fp = ps
 
         H, W, focal = (
-            intrinsics["val"].height,
-            intrinsics["val"].width,
-            intrinsics["val"].focal_length,
+            intrinsics[dset_name].height,
+            intrinsics[dset_name].width,
+            intrinsics[dset_name].focal_length,
         )
 
         uv, ray_origins, ray_directions = get_ray_bundle(
             H,
             W,
             focal,
-            poses["val"][0][:3, :4].astype(np.float32),
+            poses[dset_name][0][:3, :4].astype(np.float32),
         )
 
         rng, rendered_images = run_one_iter_of_nerf(
@@ -307,10 +307,14 @@ def train_nerf(config):
 
         if i % config.experiment.validate_every == 0:
             start = time.time()
+            image_id = (i // config.experiment.validate_every) % 200
             rgb_coarse, disp_coarse, rgb_fine, disp_fine = validation(
-                rng, get_params(optimizer_state), 0
+                rng, get_params(optimizer_state), image_id, "test"
             )
             end = time.time()
+
+            target_img = images["test"][image_id]
+            validation_psnr_coarse = mse2psnr(float(img2mse(rgb_coarse, target_img)))
 
             to_img = lambda x: np.array(
                 np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255
@@ -320,11 +324,15 @@ def train_nerf(config):
             writer.add_image(
                 "validation/disp_coarse", to_img(disp_coarse.repeat(3, axis=-1)), i
             )
+            writer.add_image("validation/reference", to_img(target_img), i)
+            writer.add_scalar("validation/psnr_coarse", validation_psnr_coarse, i)
             if config.nerf.validation.num_fine > 0:
+                validation_psnr_fine = mse2psnr(float(img2mse(rgb_fine, target_img)))
                 writer.add_image("validation/rgb_fine", to_img(rgb_fine), i)
                 writer.add_image(
                     "validation/disp_fine", to_img(disp_fine.repeat(3, axis=-1)), i
                 )
+                writer.add_scalar("validation/psnr_fine", validation_psnr_fine, i)
 
 
 def main():

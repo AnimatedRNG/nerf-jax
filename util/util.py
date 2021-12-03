@@ -3,6 +3,7 @@ import functools
 from itertools import accumulate
 from collections import namedtuple
 import os
+import math
 
 import numpy as np
 import jax
@@ -261,6 +262,17 @@ def look_at(eye, center, up):
     out = index_update(out, jax.ops.index[3, 3], 1.0)
 
     return out
+
+
+def img2mse(img_src, img_tgt):
+    return ((img_src.ravel() - img_tgt.ravel()) ** 2.0).sum()
+
+
+def mse2psnr(mse):
+    # For numerical stability, avoid a zero mse loss.
+    if mse == 0:
+        mse = 1e-5
+    return -10.0 * math.log10(mse)
 
 
 def serialize_box(base_name, box):

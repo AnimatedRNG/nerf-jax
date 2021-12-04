@@ -32,7 +32,7 @@ from sdrf import (
     manifold_loss,
 )
 from reference import torch_to_jax
-from util import get_ray_bundle, create_mrc
+from util import get_ray_bundle, create_mrc, img2mse, mse2psnr
 
 
 Losses = namedtuple(
@@ -59,8 +59,6 @@ def init_feature_grids(config, rng):
                 create_geometry_fn()(x),
                 create_appearance_fn()(x, *args) if len(tuple(args)) > 0 else None,
             ),
-            # grid_min=jnp.array([-2.0, -2.0, -2.0]),
-            # grid_max=jnp.array([2.0, 2.0, 2.0]),
             grid_min=jnp.array([-1.5, -1.5, -1.5]),
             grid_max=jnp.array([1.5, 1.5, 1.5]),
             feature_size=16,
@@ -104,88 +102,12 @@ def init_feature_grids(config, rng):
     )
 
 
-def create_networks(config):
-    coarse_embedding = compute_embedding_size(
-        include_input_xyz=True,
-        include_input_dir=True,
-        num_encoding_fn_xyz=config.nerf.model.coarse.num_encoding_fn_xyz,
-        num_encoding_fn_dir=config.nerf.model.coarse.num_encoding_fn_dir,
-    )
-    fine_embedding = compute_embedding_size(
-        include_input_xyz=True,
-        include_input_dir=True,
-        num_encoding_fn_xyz=config.nerf.model.fine.num_encoding_fn_xyz,
-        num_encoding_fn_dir=config.nerf.model.fine.num_encoding_fn_dir,
-    )
-
-    model_coarse = hk.transform(
-        lambda x, view: FlexibleNeRFModel(
-            num_encoding_fn_xyz=config.nerf.model.coarse.num_encoding_fn_xyz,
-            num_encoding_fn_dir=config.nerf.model.coarse.num_encoding_fn_dir,
-            include_input_xyz=True,
-            include_input_dir=True,
-            use_viewdirs=config.nerf.model.coarse.use_viewdirs,
-            # geometric_init=False,
-        )(x, view)
-    )
-
-    model_fine = hk.transform(
-        lambda x, view: FlexibleNeRFModel(
-            num_encoding_fn_xyz=config.nerf.model.fine.num_encoding_fn_xyz,
-            num_encoding_fn_dir=config.nerf.model.fine.num_encoding_fn_dir,
-            include_input_xyz=True,
-            include_input_dir=True,
-            use_viewdirs=config.nerf.model.fine.use_viewdirs,
-            # geometric_init=False,
-        )(x, view),
-    )
-
-    return (
-        model_coarse,
-        model_fine,
-        coarse_embedding,
-        fine_embedding,
-    )
-
-
-def init_networks(
-    rng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
-):
-    dummy_input_coarse_xyz, dummy_input_coarse_dir = (
-        jnp.zeros((config.nerf.train.chunksize, coarse_embedding[0])),
-        jnp.zeros((config.nerf.train.chunksize, coarse_embedding[1])),
-    )
-    dummy_input_fine_xyz, dummy_input_fine_dir = (
-        jnp.zeros((config.nerf.train.chunksize, fine_embedding[0])),
-        jnp.zeros((config.nerf.train.chunksize, fine_embedding[1])),
-    )
-
-    coarse_params = model_coarse.init(
-        rng[0], dummy_input_coarse_xyz, dummy_input_coarse_dir
-    )
-    fine_params = model_fine.init(rng[1], dummy_input_fine_xyz, dummy_input_fine_dir)
-
-    return (coarse_params, fine_params)
-
-
 def train_nerf(config):
     # Create random number generator
     rng = jax.random.PRNGKey(config.experiment.seed)
     rng, *subrng = jax.random.split(rng, 3)
 
     # create models
-    """model_coarse, model_fine, coarse_embedding, fine_embedding = create_networks(config)
-
-    model_coarse_params, model_fine_params = init_networks(
-        subrng, model_coarse, model_fine, coarse_embedding, fine_embedding, config
-    )
-
-    model_coarse, model_fine = (
-        hk.without_apply_rng(model_coarse),
-        hk.without_apply_rng(model_fine),
-    )
-    ps = (model_coarse_params, model_fine_params)"""
-
     sdrf, ps = init_feature_grids(config, rng)
 
     def scene_fn(i, downsampled, ps, pt, view, sdf=False):
@@ -338,21 +260,27 @@ def train_nerf(config):
             )
         return loss, losses
 
-    @jit
-    def validation(f_rng, i, ps, image_id):
+    @functools.partial(
+        jit,
+        static_argnums=(
+            3,
+            4,
+        ),
+    )
+    def validation(f_rng, i, ps, image_id, dset_name="val"):
         cp, fp = ps
 
         H, W, focal = (
-            intrinsics["val"].height,
-            intrinsics["val"].width,
-            intrinsics["val"].focal_length,
+            intrinsics[dset_name].height,
+            intrinsics[dset_name].width,
+            intrinsics[dset_name].focal_length,
         )
 
         uv, ray_origins, ray_directions = get_ray_bundle(
             H,
             W,
             focal,
-            poses["val"][0][:3, :4].astype(np.float32),
+            poses[dset_name][image_id][:3, :4].astype(np.float32),
         )
 
         downsampled = sdrf.downsample(ps.geometry, 0.1)
@@ -436,14 +364,18 @@ def train_nerf(config):
 
         if i % config.experiment.validate_every == 0:
             start = time.time()
+            image_id = (i // config.experiment.validate_every) % 200
             rgb_coarse, disp_coarse, rgb_fine, disp_fine = validation(
-                rng, i, get_params(optimizer_state), 0
+                rng, i, get_params(optimizer_state), image_id, "test"
             )
             end = time.time()
 
-            downsampled = sdrf.downsample(ps.geometry, 0.1)
+            target_img = images["test"][image_id]
+            validation_psnr_coarse = mse2psnr(float(img2mse(rgb_coarse, target_img)))
+
+            """downsampled = sdrf.downsample(ps.geometry, 0.1)
             ps = get_params(optimizer_state)
-            """create_mrc(
+            create_mrc(
                 str(logdir / "test.mrc"),
                 jax.vmap(
                     lambda pt: scene_fn(
@@ -470,11 +402,15 @@ def train_nerf(config):
             writer.add_image(
                 "validation/disp_coarse", to_img(disp_coarse.repeat(3, axis=-1)), i
             )
+            writer.add_image("validation/reference", to_img(target_img), i)
+            writer.add_scalar("validation/psnr_coarse", validation_psnr_coarse, i)
             if config.nerf.validation.num_fine > 0:
+                validation_psnr_fine = mse2psnr(float(img2mse(rgb_fine, target_img)))
                 writer.add_image("validation/rgb_fine", to_img(rgb_fine), i)
                 writer.add_image(
                     "validation/disp_fine", to_img(disp_fine.repeat(3, axis=-1)), i
                 )
+                writer.add_scalar("validation/psnr_fine", validation_psnr_fine, i)
 
 
 def main():

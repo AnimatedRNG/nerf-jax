@@ -221,7 +221,13 @@ def train_nerf(config):
             losses = Losses(coarse_loss=coarse_loss, fine_loss=0.0)
         return loss, losses
 
-    @functools.partial(jit, static_argnums=(3,))
+    @functools.partial(
+        jit,
+        static_argnums=(
+            2,
+            3,
+        ),
+    )
     def validation(f_rng, ps, image_id, dset_name="val"):
         cp, fp = ps
 
@@ -235,7 +241,7 @@ def train_nerf(config):
             H,
             W,
             focal,
-            poses[dset_name][0][:3, :4].astype(np.float32),
+            poses[dset_name][image_id][:3, :4].astype(np.float32),
         )
 
         rng, rendered_images = run_one_iter_of_nerf(

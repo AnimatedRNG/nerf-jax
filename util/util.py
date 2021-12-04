@@ -265,7 +265,7 @@ def look_at(eye, center, up):
 
 
 def img2mse(img_src, img_tgt):
-    return ((img_src.ravel() - img_tgt.ravel()) ** 2.0).sum()
+    return jnp.mean((img_src.ravel() - img_tgt.ravel()) ** 2.0)
 
 
 def mse2psnr(mse):

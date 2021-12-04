@@ -197,8 +197,14 @@ class DumbDecoder(hk.Module):
         self.depths = depths
 
     def __call__(self, coords, viewdir):
+        #encoded_viewdir = positional_encoding(viewdir, 4)
+        encoded_viewdir = viewdir
         x = jnp.concatenate(
-            [coords, dumb_decoder_linear(coords.shape[-1])(viewdir)], axis=-1
+            [
+                coords,
+                dumb_decoder_linear(coords.shape[-1])(encoded_viewdir),
+            ],
+            axis=-1,
         )
         for depth in self.depths[:-1]:
             x = dumb_decoder_linear(depth)(x)

@@ -7,6 +7,7 @@ import argparse
 from collections import defaultdict
 
 import numpy as np
+import cv2
 import tensorboard.compat.proto.event_pb2 as event_pb2
 import imageio
 from tqdm import tqdm
@@ -22,7 +23,7 @@ def extract_images(event, args, imgs):
                 imgs[value.tag][event.step] = img
 
 
-def encode(imgs, output_folder, fps):
+def encode(imgs, output_folder, fps, upscale):
     for img_tag, img_dict in imgs.items():
         img_tag = img_tag.replace("/", "_")
         out_path = os.path.join(output_folder, f"{img_tag}.mp4")
@@ -31,7 +32,14 @@ def encode(imgs, output_folder, fps):
 
         steps = sorted(list(img_dict.keys()))
         for step in tqdm(steps):
-            writer.append_data(img_dict[step])
+            img = cv2.resize(
+                img_dict[step],
+                None,
+                fx=upscale,
+                fy=upscale,
+                interpolation=cv2.INTER_NEAREST_EXACT,
+            )
+            writer.append_data(img)
         writer.close()
 
 
@@ -80,7 +88,7 @@ def main(args):
 
         event.ParseFromString(event_str)
         images = extract_images(event, args, imgs)
-    encode(imgs, args.output, args.fps)
+    encode(imgs, args.output, args.fps, args.upscale)
 
 
 if __name__ == "__main__":
@@ -88,6 +96,12 @@ if __name__ == "__main__":
 
     parser.add_argument("--input", help="saved tensorboard file to read from")
     parser.add_argument("--fps", type=int, default=10, help="fps of generated videos")
+    parser.add_argument(
+        "--upscale",
+        type=int,
+        default=1,
+        help="nearest neighbor upscale factor for images",
+    )
     parser.add_argument("--output", required=True, help="output folder")
     parser.add_argument(
         "--tags",

@@ -50,12 +50,18 @@ def run_one_iter_of_sdrf_nerflike(
     iteration,
     intrinsics,
     nerf_options,
+    sdrf_options,
     projection_options,
     rng,
     validation=False,
 ):
+    render_options = sdrf_options.render
+
     def model(pt, view):
-        sigma = 1e-1 * (0.01 ** (iteration / 200000))
+        sigma = render_options.phi.initial_sigma * (
+            render_options.phi.lr_decay_factor
+            ** (iteration / (render_options.phi.lr_decay * 1000))
+        )
         volsdf_psi = lambda dist: jax.lax.cond(
             (dist <= 0.0)[0],
             dist,
@@ -76,8 +82,8 @@ def run_one_iter_of_sdrf_nerflike(
     )
 
     _, rendered_images = run_one_iter_of_nerf(
-        ray_origins.shape[0],
-        ray_origins.shape[1],
+        H,
+        W,
         focal,
         model,
         model,

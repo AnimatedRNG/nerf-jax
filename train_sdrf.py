@@ -112,25 +112,6 @@ def train_nerf(config):
     # create models
     sdrf, ps = init_feature_grids(config, rng)
 
-    def scene_fn(i, downsampled, ps, pt, view, sdf=False):
-        sigma = 1e-1 * (0.01 ** (i / 200000))
-        volsdf_psi = lambda dist: jax.lax.cond(
-            (dist <= 0.0)[0],
-            dist,
-            lambda x: 0.5 * jnp.exp(x / sigma),
-            dist,
-            lambda x: 1 - 0.5 * jnp.exp(-x / sigma),
-        )
-        # volsdf_phi = lambda dist: 1e3 * volsdf_psi(-dist)
-        volsdf_phi = lambda dist: (sigma ** -1) * volsdf_psi(-dist)
-
-        if sdf:
-            alpha = sdrf.geometry(downsampled, pt, ps.geometry)
-        else:
-            alpha = volsdf_phi(sdrf.geometry(downsampled, pt, ps.geometry))
-        rgb = sdrf.appearance(downsampled, pt, view, ps.appearance)
-        return (rgb, alpha)
-
     # Create loader
     basedir = config.dataset.basedir
     print(f"Loading images/poses from {basedir}...")
@@ -195,6 +176,7 @@ def train_nerf(config):
             i,
             intrinsics,
             config.nerf,
+            config.sdrf,
             config.dataset.projection,
             f_rng[1],
             True,
@@ -290,6 +272,7 @@ def train_nerf(config):
             i,
             intrinsics,
             config.nerf,
+            config.sdrf,
             config.dataset.projection,
             f_rng,
             True,

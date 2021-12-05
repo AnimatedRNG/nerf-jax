@@ -17,28 +17,11 @@ from .rendering import (
     SDRFGrid,
     gaussian_pdf,
     render,
-    dumb_render,
     find_intersections,
     find_intersections_batched,
 )
 from util import map_batched_tuple, map_batched_rng
-
-
-"""def eikonal_loss(sdf, pts, sdf_params):
-    # TODO: Rewrite this, this is clunky
-    sdf_grad = lambda pt: grad(lambda pt, paras: sdf(pt, paras).sum(), argnums=(0,))(
-        pt, sdf_params
-    )
-    return jnp.mean(
-        vmap(lambda pt: (1.0 - jnp.linalg.norm(sdf_grad(pt))) ** 2.0)(pts),
-        axis=0,
-    )
-
-
-def manifold_loss(sdf, pts, sdf_params):
-    return jnp.mean(
-        vmap(lambda pt: jnp.exp(-1e2 * jnp.abs(sdf(pt, sdf_params))))(pts), axis=0
-    )"""
+from nerf import run_one_iter_of_nerf
 
 
 def eikonal_loss(sdf, pts):
@@ -60,7 +43,57 @@ def manifold_loss(sdf, pts):
     )
 
 
-def run_one_iter_of_sdrf(
+def run_one_iter_of_sdrf_nerflike(
+    sdrf,
+    ray_origins,
+    ray_directions,
+    iteration,
+    intrinsics,
+    nerf_options,
+    projection_options,
+    rng,
+    validation=False,
+):
+    def model(pt, view):
+        sigma = 1e-1 * (0.01 ** (iteration / 200000))
+        volsdf_psi = lambda dist: jax.lax.cond(
+            (dist <= 0.0)[0],
+            dist,
+            lambda x: 0.5 * jnp.exp(x / sigma),
+            dist,
+            lambda x: 1 - 0.5 * jnp.exp(-x / sigma),
+        )
+        volsdf_phi = lambda dist: (sigma ** -1) * volsdf_psi(-dist)
+
+        alpha = volsdf_phi(sdrf.geometry(pt))
+        rgb = sdrf.appearance(pt, view)
+        return (rgb, alpha)
+
+    H, W, focal = (
+        intrinsics["train"].height,
+        intrinsics["train"].width,
+        intrinsics["train"].focal_length,
+    )
+
+    _, rendered_images = run_one_iter_of_nerf(
+        ray_origins.shape[0],
+        ray_origins.shape[1],
+        focal,
+        model,
+        model,
+        ray_origins,
+        ray_directions,
+        nerf_options.validation if validation else nerf_options.train,
+        nerf_options.model,
+        projection_options,
+        rng,
+        validation,
+    )
+
+    return rendered_images
+
+
+def run_one_iter_of_sdrf_old(
     model,
     params,
     uv,
@@ -100,7 +133,7 @@ def run_one_iter_of_sdrf(
     sdrf_model = model
     rng, subrng = jax.random.split(rng, 2)
 
-    """render_fn = lambda uv, ro, rd, xs, depths: render(
+    render_fn = lambda uv, ro, rd, xs, depths: render(
         sdrf_model.geometry,
         sdrf_model.appearance,
         uv,
@@ -129,27 +162,12 @@ def run_one_iter_of_sdrf(
         rng,
     )
     xs, depths = intersections
-    """
 
-    volsdf_psi = lambda dist, _: jax.lax.cond(
-        (dist <= 0.0)[0],
-        dist,
-        lambda x: 0.5 * jnp.exp(x / 1e-3),
-        dist,
-        lambda x: 1 - 0.5 * jnp.exp(-x / 1e-3),
+    outputs = map_batched_tuple(
+        (uv, ro, rd, xs, depths),
+        render_fn,
+        options.render.chunksize,
+        True,
     )
-    volsdf_phi = lambda dist, s: 1e3 * volsdf_psi(-dist, s)
-
-    dumb_render_fn = lambda ro, rd: dumb_render(
-        sdrf_model.geometry,
-        sdrf_model.appearance,
-        ro,
-        rd,
-        volsdf_phi,
-        sigma,
-        subrng,
-        options.render,
-    )
-    outputs = vmap(dumb_render_fn)(ro, rd)
 
     return outputs

@@ -381,18 +381,7 @@ def integrate_rev(sdf, res, rendered_attrib_g):
     )
 
 
-def masked_sdf(sdf, valid, pt):
-    return masked_sdf_fwd(sdf, valid, pt)[0]
-
-
-def masked_sdf_fwd(sdf, valid, pt):
-    return (
-        valid * sdf(pt),
-        (valid, pt),
-    )
-
-
-"""@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
+@functools.partial(jax.custom_vjp, nondiff_argnums=(0,))
 def masked_sdf(sdf, valid, pt):
     return masked_sdf_fwd(sdf, valid, pt)[0]
 
@@ -422,28 +411,7 @@ def masked_sdf_rev(sdf, res, g):
     return (None, *grads_input)
 
 
-masked_sdf.defvjp(masked_sdf_fwd, masked_sdf_rev)"""
-
-
-def dumb_render(sdf, appearance, ro, rd, phi, sigma, rng, options):
-    ts = jnp.linspace(2.0, 6.0, 10)
-    pts = vmap(lambda t: ro + t * rd)(ts)
-
-    intensity = lambda pt: jnp.clip(appearance(pt, rd), 0.0, 1.0)
-    phi_x = vmap(lambda pt: phi(sdf(pt), sigma))(pts)
-    intensities = vmap(intensity)(pts)
-
-    rgba = jnp.concatenate([intensities, phi_x], axis=-1)
-
-    (
-        rgb_coarse,
-        disp_coarse,
-        acc_coarse,
-        weights,
-        depth_coarse,
-    ) = volume_render_radiance_field(rgba, ts, rd, rng, 0.2, True)
-
-    return (rgb_coarse, disp_coarse[..., None])
+masked_sdf.defvjp(masked_sdf_fwd, masked_sdf_rev)
 
 
 def render(sdf, appearance, uv, ro, rd, xs, depths, phi, sigma, options):

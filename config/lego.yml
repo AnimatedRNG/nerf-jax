@@ -74,9 +74,8 @@ sdrf:
   render:
     phi:
       initial_sigma: 1.0E-1
-      #lr_decay: 250
-      lr_decay: 2
-      lr_decay_factor: 0.1
+      lr_decay: 200
+      lr_decay_factor: 0.01
     scale_factor:
       initial_sigma: 1.0
       lr_decay: 3

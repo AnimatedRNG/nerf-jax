@@ -59,10 +59,10 @@ nerf:
 sdrf:
   eikonal:
     scale: 2.0
-    num_samples: 2048
+    num_samples: 32768
   manifold:
     scale: 2.0
-    num_samples: 2048
+    num_samples: 32768
   sampler:
     kind: "stratified"
     linear:

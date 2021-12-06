@@ -174,6 +174,13 @@ def train_nerf(config):
             True,
         )
 
+        eikonal_samples = (
+            jax.random.uniform(
+                f_rng[2], (config.sdrf.manifold.num_samples, 3), minval=-2.0, maxval=2.0
+            )
+            * config.sdrf.manifold.scale
+        )
+
         manifold_samples = (
             jax.random.uniform(
                 f_rng[3], (config.sdrf.manifold.num_samples, 3), minval=-2.0, maxval=2.0
@@ -186,8 +193,8 @@ def train_nerf(config):
             jnp.mean(jnp.square(1 - jax.vmap(jnp.linalg.norm)(df_di)).ravel()),
             manifold_loss(sdrf_f.geometry, manifold_samples),
         )
-        # e_loss, m_loss = 0.0, 0.0
-        e_loss = 0.0
+        # let's use the old version for now
+        e_loss = eikonal_loss(sdrf_f.geometry, eikonal_samples)
 
         rgb_coarse, _, _, rgb_fine, _, _ = (
             rendered_images[..., :3],

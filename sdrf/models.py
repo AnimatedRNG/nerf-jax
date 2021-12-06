@@ -197,7 +197,7 @@ class DumbDecoder(hk.Module):
         self.depths = depths
 
     def __call__(self, coords, viewdir):
-        #encoded_viewdir = positional_encoding(viewdir, 4)
+        # encoded_viewdir = positional_encoding(viewdir, 4)
         encoded_viewdir = viewdir
         x = jnp.concatenate(
             [

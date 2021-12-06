@@ -29,6 +29,7 @@ from sdrf import (
     FeatureGrid,
     IGR,
     DumbDecoder,
+    RadianceInitializer,
     eikonal_loss,
     manifold_loss,
     run_one_iter_of_sdrf_nerflike,
@@ -45,34 +46,34 @@ register_pytree_node(Losses, lambda xs: (tuple(xs), None), lambda _, xs: Losses(
 
 def init_feature_grids(config, rng):
     def feature_grid_fns():
-        create_geometry_fn = lambda: IGR(
-            [
-                16,
-            ],
-            skip_in=tuple(),
-            beta=100.0,
-        )
+        create_geometry_fn = lambda: lambda x: x
         create_appearance_fn = lambda: DumbDecoder(
             [16, 16, 3],
         )
-        grid = FeatureGrid(
+        sdf_grid = FeatureGrid(
             64,
-            lambda x, *args: (
-                create_geometry_fn()(x),
-                create_appearance_fn()(x, *args) if len(tuple(args)) > 0 else None,
-            ),
+            lambda x: create_geometry_fn()(x),
+            grid_min=jnp.array([-1.5, -1.5, -1.5]),
+            grid_max=jnp.array([1.5, 1.5, 1.5]),
+            feature_size=1,
+        )
+        radiance_grid = FeatureGrid(
+            64,
+            lambda x, view: create_appearance_fn()(x, view),
             grid_min=jnp.array([-1.5, -1.5, -1.5]),
             grid_max=jnp.array([1.5, 1.5, 1.5]),
             feature_size=16,
+            feature_initializer_fn=RadianceInitializer,
         )
 
-        def init(pt, scale_factor):
-            return grid.sample(grid(scale_factor), pt, [pt])
+        def init(pt):
+            return (
+                sdf_grid.sample(pt),
+                radiance_grid.sample(pt, [pt]),
+                sdf_grid.finite_difference(),
+            )
 
-        return init, (
-            grid,
-            grid.sample,
-        )
+        return init, (sdf_grid.sample, radiance_grid.sample, sdf_grid.finite_difference)
 
     feature_grid = hk.multi_transform(feature_grid_fns)
 
@@ -83,22 +84,17 @@ def init_feature_grids(config, rng):
                 3,
             ]
         ),
-        1.0,
     )
 
-    downsample, point_sample = feature_grid.apply
+    sdf_point_sample, radiance_point_sample, finite_difference = feature_grid.apply
 
     return (
         SDRFGrid(
-            downsample=lambda params, scale_factor: downsample(
-                params, None, scale_factor
+            geometry=lambda pt, params: sdf_point_sample(params, None, pt),
+            appearance=lambda pt, rd, params: radiance_point_sample(
+                params, None, pt, [rd]
             ),
-            geometry=lambda mipmap, pt, params: point_sample(params, None, mipmap, pt)[
-                0
-            ],
-            appearance=lambda mipmap, pt, rd, params: point_sample(
-                params, None, mipmap, pt, [rd]
-            )[1],
+            finite_difference=lambda params: finite_difference(params, None),
         ),
         SDRFParams(geometry=params, appearance=params),
     )
@@ -160,13 +156,9 @@ def train_nerf(config):
             config.dataset.sampler,
         )
 
-        downsampled = sdrf.downsample(ps.geometry, 0.1)
-
         sdrf_f = SDRF(
-            geometry=lambda pt: sdrf.geometry(downsampled, pt, ps.geometry),
-            appearance=lambda pt, view: sdrf.appearance(
-                downsampled, pt, view, ps.appearance
-            ),
+            geometry=lambda pt: sdrf.geometry(pt, ps.geometry),
+            appearance=lambda pt, view: sdrf.appearance(pt, view, ps.appearance),
         )
 
         rendered_images = run_one_iter_of_sdrf_nerflike(
@@ -182,24 +174,20 @@ def train_nerf(config):
             True,
         )
 
-        eikonal_samples = (
-            jax.random.uniform(
-                f_rng[2], (config.sdrf.eikonal.num_samples, 3), minval=-1.0, maxval=1.0
-            )
-            * config.sdrf.eikonal.scale
-        )
-
         manifold_samples = (
             jax.random.uniform(
-                f_rng[3], (config.sdrf.manifold.num_samples, 3), minval=-1.0, maxval=1.0
+                f_rng[3], (config.sdrf.manifold.num_samples, 3), minval=-2.0, maxval=2.0
             )
             * config.sdrf.manifold.scale
         )
 
+        df_di = sdrf.finite_difference(ps.geometry)
         e_loss, m_loss = (
-            eikonal_loss(sdrf_f.geometry, eikonal_samples),
+            jnp.mean(jnp.square(1 - jax.vmap(jnp.linalg.norm)(df_di)).ravel()),
             manifold_loss(sdrf_f.geometry, manifold_samples),
         )
+        # e_loss, m_loss = 0.0, 0.0
+        e_loss = 0.0
 
         rgb_coarse, _, _, rgb_fine, _, _ = (
             rendered_images[..., :3],
@@ -210,8 +198,8 @@ def train_nerf(config):
             rendered_images[..., 9:10],
         )
 
-        # weights = (3e3, 1e2, 5e1)
-        weights = (3e3, 1e2, 1e-9)
+        weights = (3e3, 1e2, 5e1)
+        # weights = (3e3, 1e-9, 1e-9)
 
         coarse_loss = jnp.mean(((target_s[..., :3] - rgb_coarse) ** 2.0).flatten())
         loss = coarse_loss * weights[0] + e_loss * weights[1] + m_loss * weights[2]
@@ -256,13 +244,9 @@ def train_nerf(config):
             poses[dset_name][image_id][:3, :4].astype(np.float32),
         )
 
-        downsampled = sdrf.downsample(ps.geometry, 0.1)
-
         sdrf_f = SDRF(
-            geometry=lambda pt: sdrf.geometry(downsampled, pt, ps.geometry),
-            appearance=lambda pt, view: sdrf.appearance(
-                downsampled, pt, view, ps.appearance
-            ),
+            geometry=lambda pt: sdrf.geometry(pt, ps.geometry),
+            appearance=lambda pt, view: sdrf.appearance(pt, view, ps.appearance),
         )
 
         rendered_images = run_one_iter_of_sdrf_nerflike(
@@ -349,26 +333,14 @@ def train_nerf(config):
             target_img = images["test"][image_id]
             validation_psnr_coarse = mse2psnr(float(img2mse(rgb_coarse, target_img)))
 
-            """downsampled = sdrf.downsample(ps.geometry, 0.1)
             ps = get_params(optimizer_state)
             create_mrc(
                 str(logdir / "test.mrc"),
-                jax.vmap(
-                    lambda pt: scene_fn(
-                        i,
-                        downsampled,
-                        ps,
-                        pt,
-                        jnp.ones(
-                            3,
-                        ),
-                        sdf=False,
-                    )[1]
-                ),
+                jax.vmap(lambda pt: sdrf.geometry(pt, ps.geometry)),
                 grid_min=jnp.array([-2.0, -2.0, -2.0]),
                 grid_max=jnp.array([2.0, 2.0, 2.0]),
                 resolution=256,
-            )"""
+            )
 
             to_img = lambda x: np.array(
                 np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255

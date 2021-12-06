@@ -530,7 +530,7 @@ register_pytree_node(
 SDRF = namedtuple("SDRF", ["geometry", "appearance"])
 register_pytree_node(SDRF, lambda xs: (tuple(xs), None), lambda _, xs: SDRF(*xs))
 
-SDRFGrid = namedtuple("SDRFGrid", ["downsample", "geometry", "appearance"])
+SDRFGrid = namedtuple("SDRFGrid", ["geometry", "appearance", "finite_difference"])
 register_pytree_node(
     SDRFGrid, lambda xs: (tuple(xs), None), lambda _, xs: SDRFGrid(*xs)
 )

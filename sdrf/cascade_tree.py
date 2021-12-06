@@ -11,9 +11,9 @@ from jax import vmap
 import jax.numpy as jnp
 import haiku as hk
 from scipy.spatial import KDTree
+from jax.scipy.ndimage import map_coordinates
 
 from util import get_fan
-from jax.experimental.host_callback import id_print
 
 
 def gaussian(M, std, sym=True):
@@ -164,7 +164,7 @@ def pow_smin(a, b, k=8):
     return jnp.power((a_k * b_k) / (a_k + b_k), 1.0 / k)
 
 
-def sphere_init(grid_min, grid_max, resolution, hidden_size, dtype=jnp.float32):
+def sphere_init(grid_min, grid_max, resolution, dtype=jnp.float32):
     dimension = grid_min.shape[0]
     ds = jnp.stack(
         jnp.meshgrid(
@@ -176,8 +176,31 @@ def sphere_init(grid_min, grid_max, resolution, hidden_size, dtype=jnp.float32):
         axis=-1,
     )
 
-    initializer = GeometricInitializer()((dimension, hidden_size), dtype=dtype)
-    return (ds.reshape(-1, dimension) @ initializer).reshape(
+    sphere_sdf = lambda pt: jnp.linalg.norm(pt, keepdims=True) - 0.5
+    return vmap(sphere_sdf)(ds.reshape(-1, 3)).reshape(ds.shape[:-1] + (1,))
+
+
+def variance_init(grid_min, grid_max, resolution, hidden_size, dtype=jnp.float32):
+    dimension = grid_min.shape[0]
+    ds = jnp.stack(
+        jnp.meshgrid(
+            *tuple(
+                jnp.linspace(grid_min[di], grid_max[di], resolution, dtype=dtype)
+                for di in range(dimension)
+            )
+        ),
+        axis=-1,
+    )
+
+    w_init = hk.initializers.VarianceScaling(1.0, "fan_in", "uniform")
+    b_init = hk.initializers.VarianceScaling(1.0, "fan_in", "uniform")
+
+    # the weight and bias matrix for the first layer of a NeRF
+    w_matrix = w_init((dimension, hidden_size), dtype=dtype)
+    b_matrix = w_init((hidden_size,), dtype=dtype)
+
+    # the equivalent of running the first layer of the network
+    return ((ds.reshape(-1, dimension) @ w_matrix) + b_matrix).reshape(
         ds.shape[:-1] + (hidden_size,)
     )
 
@@ -196,35 +219,29 @@ class PointCloudSDF(object):
 
 
 class GeometricInitializer(hk.initializers.Initializer):
-    def __init__(self, last_layer=False):
-        self.last_layer = last_layer
-
-    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
-        fan_in, fan_out = get_fan(shape)
-
-        if self.last_layer:
-            mean = jnp.sqrt(np.pi) / jnp.sqrt(fan_in)
-            stdv = 1e-5
-            return hk.initializers.RandomNormal(stdv, mean)(shape, dtype)
-        else:
-            mean = 0.0
-            stdv = jnp.sqrt(2.0) / jnp.sqrt(fan_out)
-            return hk.initializers.RandomNormal(stdv, mean)(shape, dtype)
-
-
-class LayerSphereInitializer(hk.initializers.Initializer):
     def __init__(self, grid_min, grid_max):
         self.grid_min = grid_min
         self.grid_max = grid_max
 
     def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
-        # shape is [dim_x, dim_y, ...,hidden_size]
+        # shape is [dim_x, dim_y, ..., 1]
         assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
+        assert shape[-1] == 1
         resolution = shape[0]
-        return jax.nn.relu(
-            sphere_init(
-                self.grid_min, self.grid_max, resolution, shape[-1], dtype=dtype
-            )
+        return sphere_init(self.grid_min, self.grid_max, resolution, dtype=dtype)
+
+
+class RadianceInitializer(hk.initializers.Initializer):
+    def __init__(self, grid_min, grid_max):
+        self.grid_min = grid_min
+        self.grid_max = grid_max
+
+    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
+        # shape is [dim_x, dim_y, ..., hidden_size]
+        assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
+        resolution, hidden_size = shape[0], shape[-1]
+        return variance_init(
+            self.grid_min, self.grid_max, resolution, hidden_size, dtype=dtype
         )
 
 
@@ -274,7 +291,7 @@ class FeatureGrid(hk.Module):
         grid_min=jnp.array([-1.0, -1.0]),
         grid_max=jnp.array([1.0, 1.0]),
         feature_size=128,
-        feature_initializer_fn=sphere_init,
+        feature_initializer_fn=GeometricInitializer,
     ):
         super(FeatureGrid, self).__init__()
         self.dimensions = grid_min.shape[0]
@@ -286,25 +303,18 @@ class FeatureGrid(hk.Module):
         self.sample_locs = self.sample_locs.reshape((2,) * self.dimensions + (-1,))
         self.decoder_fn = decoder_fn
 
-        self.num_levels = int(math.log2(self.resolution))
-
         self.grid_min = grid_min
         self.grid_max = grid_max
         self.feature_size = feature_size
-        self.feature_initializer_fn = feature_initializer_fn
 
         self.base_features = hk.get_parameter(
             "w",
             self.dims + (self.feature_size,),
             dtype=jnp.float32,
-            init=LayerSphereInitializer(self.grid_min, self.grid_max),
+            init=feature_initializer_fn(self.grid_min, self.grid_max),
         )
 
-    def __call__(self, scale_factor):
-        return downsample(self.base_features, scale_factor)
-        # return self.base_features
-
-    def sample(self, mipmap, pt, decoder_args=[]):
+    def sample(self, pt: jnp.ndarray, decoder_args=[]):
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
 
         # lattice point interpolation, not grid
@@ -314,9 +324,49 @@ class FeatureGrid(hk.Module):
 
         # TODO: is the clipping even needed anymore?
         xs = jnp.clip(idx + self.sample_locs, a_min=0, a_max=self.resolution)
-        cs = vmap(lambda x: mipmap[tuple(x)])(xs.reshape(-1, self.dimensions)).reshape(
-            xs.shape[:-1] + (self.feature_size,)
-        )
+        cs = vmap(lambda x: self.base_features[tuple(x)])(
+            xs.reshape(-1, self.dimensions)
+        ).reshape(xs.shape[:-1] + (self.feature_size,))
         pt_feature = n_dimensional_interpolation(cs, idx_alpha)
 
+        """
+        # extremely slow alternative that uses LAX-backed scipy function
+        pt_feature = vmap(
+            lambda pt_i: map_coordinates(
+                self.base_features[..., pt_i],
+                alpha * (jnp.array(self.dims).astype(jnp.float32) - 1),
+                order=1,
+                mode="nearest",
+            )
+        )(jnp.arange(self.feature_size))"""
+
         return self.decoder_fn(pt_feature, *decoder_args)
+
+    def finite_difference(self):
+        # must be scalar field
+        assert self.base_features.shape[-1] == 1
+        kernel = jnp.array(
+            [1 / 280, -4 / 105, 1 / 5, -4 / 5, 0, 4 / 5, -1 / 5, -4 / 105, -1 / 280]
+        )
+
+        off = kernel.shape[0] // 2
+
+        def rec_conv(xs: jnp.ndarray):
+            """
+            xs is an array where the last dimension is the spatial dimension
+            that we want to convolve; so we just vmap over all other axes and
+            convolve that last one
+            """
+            if xs.ndim == 1:
+                padded = jnp.pad(xs, ((off, off),), mode="reflect")
+                # TODO: fix for non-uniform grid dimensions?
+                return jnp.correlate(padded, kernel, mode="valid")
+            else:
+                return vmap(rec_conv)(xs)
+
+        # move axis to the end, then convolve with the kernel, then move back
+        df = tuple(
+            jnp.moveaxis(rec_conv(jnp.moveaxis(self.base_features, axis, -1)), -1, axis)
+            for axis in range(self.base_features.ndim - 1)
+        )
+        return jnp.stack(df, axis=-1)

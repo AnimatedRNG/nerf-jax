@@ -340,14 +340,14 @@ def train_nerf(config):
             target_img = images["test"][image_id]
             validation_psnr_coarse = mse2psnr(float(img2mse(rgb_coarse, target_img)))
 
-            ps = get_params(optimizer_state)
+            """ps = get_params(optimizer_state)
             create_mrc(
                 str(logdir / "test.mrc"),
                 jax.vmap(lambda pt: sdrf.geometry(pt, ps.geometry)),
                 grid_min=jnp.array([-2.0, -2.0, -2.0]),
                 grid_max=jnp.array([2.0, 2.0, 2.0]),
                 resolution=256,
-            )
+            )"""
 
             to_img = lambda x: np.array(
                 np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255

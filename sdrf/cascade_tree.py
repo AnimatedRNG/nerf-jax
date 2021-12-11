@@ -177,7 +177,7 @@ def sphere_init(grid_min, grid_max, resolution, dtype=jnp.float32):
     )
 
     sphere_sdf = lambda pt: jnp.linalg.norm(pt, keepdims=True) - 0.5
-    return vmap(sphere_sdf)(ds.reshape(-1, 3)).reshape(ds.shape[:-1] + (1,))
+    return vmap(sphere_sdf)(ds.reshape(-1, dimension)).reshape(ds.shape[:-1] + (1,))
 
 
 def variance_init(grid_min, grid_max, resolution, hidden_size, dtype=jnp.float32):
@@ -243,6 +243,17 @@ class RadianceInitializer(hk.initializers.Initializer):
         return variance_init(
             self.grid_min, self.grid_max, resolution, hidden_size, dtype=dtype
         )
+
+
+class ConstantInitializer(hk.initializers.Initializer):
+    def __init__(self, grid_min, grid_max):
+        self.grid_min = grid_min
+        self.grid_max = grid_max
+
+    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
+        # shape is [dim_x, dim_y, ..., hidden_size]
+        assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
+        return jnp.ones(shape, dtype=dtype)
 
 
 def downsample(base_mipmap, scale_factor) -> jnp.ndarray:
@@ -346,7 +357,7 @@ class FeatureGrid(hk.Module):
         # must be scalar field
         assert self.base_features.shape[-1] == 1
         kernel = jnp.array(
-            [1 / 280, -4 / 105, 1 / 5, -4 / 5, 0, 4 / 5, -1 / 5, -4 / 105, -1 / 280]
+            [1 / 280, -4 / 105, 1 / 5, -4 / 5, 0, 4 / 5, -1 / 5, 4 / 105, -1 / 280]
         )
 
         off = kernel.shape[0] // 2
@@ -358,9 +369,10 @@ class FeatureGrid(hk.Module):
             convolve that last one
             """
             if xs.ndim == 1:
+                h = (self.grid_max[0] - self.grid_min[0]) / self.resolution
                 padded = jnp.pad(xs, ((off, off),), mode="reflect")
                 # TODO: fix for non-uniform grid dimensions?
-                return jnp.correlate(padded, kernel, mode="valid")
+                return jnp.correlate(padded, kernel, mode="valid") / h
             else:
                 return vmap(rec_conv)(xs)
 

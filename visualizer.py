@@ -16,8 +16,6 @@ import jax.numpy as jnp
 from jax.tree_util import tree_map
 import haiku as hk
 
-from scipy.spatial.transform import Rotation as R
-
 import pyglet
 from pyglet.gl import *
 from pyglet.window import key
@@ -90,22 +88,13 @@ class Renderer(object):
         self.camera = FirstPersonCamera(self.window)
         self.iteration = iteration
 
+        self.window.set_exclusive_mouse(True)
+
         @self.window.event
         def on_draw():
             self.window.clear()
 
-            r = R.from_euler(
-                "yz",
-                jnp.array(
-                    [self.camera.yaw, self.camera.pitch]
-                ),
-                degrees=True,
-            )
-            p = np.array(self.camera.position)
-            pose = jnp.array(np.concatenate((r.as_matrix(), p[:, np.newaxis]), axis=1))
-            print("position", p)
-            print('yaw', self.camera.yaw)
-            print('pitch', self.camera.pitch)
+            pose = self.camera.view_matrix
 
             start = time.time()
             rgb_root = render(

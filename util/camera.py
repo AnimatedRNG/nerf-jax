@@ -3,6 +3,8 @@
 import math
 import collections
 
+import numpy as np
+
 import pyglet
 
 
@@ -40,9 +42,9 @@ class FirstPersonCamera(object):
             pyglet.app.run()
     """
 
-    DEFAULT_MOVEMENT_SPEED = 1.0
+    DEFAULT_MOVEMENT_SPEED = 2.0
 
-    DEFAULT_MOUSE_SENSITIVITY = 2.0
+    DEFAULT_MOUSE_SENSITIVITY = 0.4
 
     DEFAULT_KEY_MAP = {
         "forward": pyglet.window.key.W,
@@ -91,76 +93,114 @@ class FirstPersonCamera(object):
 
         self.position = list(position)
 
-        self.yaw = 0
-        self.pitch = 0
+        self.direction = np.array([0.0, 1.0, 0.0])
+        self.position = np.array([0.0, 0.0, -1.0])
+
+        self.view_matrix = np.eye(3)
 
         self.__input_handler = FirstPersonCamera.InputHandler()
 
         window.push_handlers(self.__input_handler)
 
-        self.y_inv = y_inv
         self.key_map = key_map
         self.movement_speed = movement_speed
         self.mouse_sensitivity = mouse_sensitivity
 
-    def adjust_yaw(self, yaw):
-        """Turn above x-axis"""
-        self.yaw += yaw * self.mouse_sensitivity
-
-    def adjust_pitch(self, pitch):
-        """Turn above y-axis"""
-        self.pitch += pitch * self.mouse_sensitivity * ((-1) if self.y_inv else 1)
-
-    def move_forward(self, distance):
-        """Move forward on distance"""
-        self.position[0] -= distance * math.sin(math.radians(self.yaw))
-        self.position[2] += distance * math.cos(math.radians(self.yaw))
-
-    def move_backward(self, distance):
-        """Move backward on distance"""
-        self.position[0] += distance * math.sin(math.radians(self.yaw))
-        self.position[2] -= distance * math.cos(math.radians(self.yaw))
-
-    def move_left(self, distance):
-        """Move left on distance"""
-        self.position[0] -= distance * math.sin(math.radians(self.yaw - 90))
-        self.position[2] += distance * math.cos(math.radians(self.yaw - 90))
-
-    def move_right(self, distance):
-        """Move right on distance"""
-        self.position[0] -= distance * math.sin(math.radians(self.yaw + 90))
-        self.position[2] += distance * math.cos(math.radians(self.yaw + 90))
-
-    def move_up(self, distance):
-        """Move up on distance"""
-        self.position[1] -= distance
-
-    def move_down(self, distance):
-        """Move down on distance"""
-        self.position[1] += distance
-
     def update(self, delta_time):
         """Update camera state"""
-        self.adjust_yaw(self.__input_handler.dx)
-        self.__input_handler.dx = 0
+        angle = np.array(
+            [
+                math.atan2(self.direction[2], self.direction[0]),
+                math.atan2(
+                    math.sqrt(
+                        self.direction[0] * self.direction[0]
+                        + self.direction[2] * self.direction[2]
+                    ),
+                    self.direction[1],
+                ),
+            ]
+        )
+        angle = (
+            angle
+            + np.array([self.__input_handler.dx, self.__input_handler.dy])
+            * self.mouse_sensitivity
+            * delta_time
+        )
+        angle = np.array([angle[0], min(math.pi - 0.1, max(angle[1], 0.1))])
 
-        self.adjust_pitch(self.__input_handler.dy)
+        self.direction = np.array(
+            [
+                np.sin(angle[1]) * np.cos(angle[0]),
+                np.cos(angle[1]),
+                np.sin(angle[1]) * np.sin(angle[0]),
+            ]
+        )
+        print("direction is ", self.direction)
+
+        # reset camera position
+        self.__input_handler.dx = 0
         self.__input_handler.dy = 0
 
+        f = self.direction / np.linalg.norm(self.direction)
+
+        up = np.array([0.0, 1.0, 0.0])
+
+        s = np.array(
+            [
+                f[1] * up[2] - f[2] * up[1],
+                f[2] * up[0] - f[0] * up[2],
+                f[0] * up[1] - f[1] * up[0],
+            ]
+        )
+        s /= np.linalg.norm(s)
+
+        u = np.array(
+            [
+                s[1] * f[2] - s[2] * f[1],
+                s[2] * f[0] - s[0] * f[2],
+                s[0] * f[1] - s[1] * f[0],
+            ]
+        )
+
+        dp = delta_time * self.movement_speed
+
         if self.__input_handler.pressed[self.key_map["forward"]]:
-            self.move_forward(delta_time * self.movement_speed)
+            self.position += s * dp
 
         if self.__input_handler.pressed[self.key_map["backward"]]:
-            self.move_backward(delta_time * self.movement_speed)
+            self.position -= s * dp
 
         if self.__input_handler.pressed[self.key_map["left"]]:
-            self.move_left(delta_time * self.movement_speed)
+            self.position -= u * dp
 
         if self.__input_handler.pressed[self.key_map["right"]]:
-            self.move_right(delta_time * self.movement_speed)
+            self.position += u * dp
 
         if self.__input_handler.pressed[self.key_map["up"]]:
-            self.move_up(delta_time * self.movement_speed)
+            self.position += f * dp
 
         if self.__input_handler.pressed[self.key_map["down"]]:
-            self.move_down(delta_time * self.movement_speed)
+            self.position -= f * dp
+
+        p = np.array(
+            [
+                -self.position[0] * s[0]
+                - self.position[1] * s[1]
+                - self.position[2] * s[2],
+                -self.position[0] * u[0]
+                - self.position[1] * u[1]
+                - self.position[2] * u[2],
+                -self.position[0] * f[0]
+                - self.position[1] * f[1]
+                - self.position[2] * f[2],
+            ]
+        )
+
+        self.view_matrix = np.array(
+            [
+                [s[0], u[0], f[0]],
+                [s[1], u[1], f[1]],
+                [s[2], u[2], f[2]],
+                [p[0], p[1], p[2]],
+            ]
+        ).transpose()

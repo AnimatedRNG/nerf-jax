@@ -2,7 +2,7 @@ experiment:
   seed: 42
   train_iters: 200000
   jit_loop: 1
-  validate_every: 100
+  validate_every: 200
   save_every: 5000
   print_every: 100
 dataset:
@@ -81,7 +81,7 @@ sdrf:
       lr_decay: 3
       lr_decay_factor: 0.9
     num_samples: 8
-    truncation_distance: 10.0
+    truncation_distance: 0.5
     additive: True
     chunksize: 32768 # 4096
     isosurfaces_debug: False

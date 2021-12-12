@@ -17,11 +17,21 @@ from .rendering import (
     SDRFGrid,
     gaussian_pdf,
     render,
+    sphere_trace_depth,
     find_intersections,
     find_intersections_batched,
 )
 from util import map_batched_tuple, map_batched_rng
-from nerf import run_one_iter_of_nerf
+from nerf import run_one_iter_of_nerf, volume_render_radiance_field
+
+
+def geometry_bound(projection_options, sdf):
+    # return lambda p: jnp.where(
+    #    jnp.linalg.norm(p) > projection_options.far, jnp.zeros_like(sdf(p)), sdf(p)
+    # )
+    return lambda p: jnp.minimum(
+        sdf(p), projection_options.far - jnp.linalg.norm(p, keepdims=True)
+    )
 
 
 def eikonal_loss(sdf, pts):
@@ -43,6 +53,89 @@ def manifold_loss(sdf, pts):
     )
 
 
+def run_one_iter_of_sdrf(
+    sdrf,
+    ray_origins,
+    ray_directions,
+    iteration,
+    intrinsics,
+    nerf_options,
+    sdrf_options,
+    projection_options,
+    rng,
+    validation=False,
+):
+    rng, *subrng = jax.random.split(rng, 3)
+
+    ro = ray_origins.reshape((-1, 3))
+    rd = ray_directions.reshape((-1, 3))
+
+    render_options = sdrf_options.render
+    sigma = render_options.phi.initial_sigma * (
+        render_options.phi.lr_decay_factor
+        ** (iteration / (render_options.phi.lr_decay * 1000))
+    )
+    sigma = jnp.clip(sigma, a_min=5e-3)
+
+    # add a little bit of jitter to the samples?
+    noise_fn = lambda x: x + jax.random.uniform(
+        subrng[0], x.shape, minval=-sigma / 2, maxval=sigma / 2
+    )
+
+    #geometry_fn = geometry_bound(projection_options, sdrf.geometry)
+    geometry_fn = sdrf.geometry
+
+    def intersect(ro, rd):
+        def intersect_inner(iso):
+            return sphere_trace_depth(
+                geometry_fn, ro, rd, noise_fn(iso), render_options.truncation_distance
+            )
+
+        xs = jnp.linspace(-sigma, sigma, sdrf_options.render.num_samples)
+        return vmap(intersect_inner)(xs)
+
+    # z_vals -> (num_rays, N_samples)
+    z_vals = vmap(intersect)(ro, rd)
+    z_vals = jax.lax.sort(z_vals, dimension=-1)
+    z_vals = jax.lax.stop_gradient(z_vals)
+    pts = ro[..., None, :] + rd[..., None, :] * z_vals[..., None]
+
+    def model(pt, view):
+        # sigma_pt = sigma + sdrf.ddf(pt)
+        sigma_pt = sigma
+        volsdf_psi = lambda dist: jax.lax.cond(
+            (dist <= 0.0)[0],
+            dist,
+            lambda x: 0.5 * jnp.exp(x / sigma_pt),
+            dist,
+            lambda x: 1 - 0.5 * jnp.exp(-x / sigma_pt),
+        )
+        volsdf_phi = lambda dist: (sigma_pt ** -1) * volsdf_psi(-dist)
+
+        alpha = volsdf_phi(geometry_fn(pt))
+        rgb = sdrf.appearance(pt, view)
+        return jnp.concatenate((rgb, alpha), axis=-1)
+
+    radiance_field = vmap(
+        lambda pts_ray, view: vmap(lambda pt: model(pt, view))(pts_ray)
+    )(pts, rd)
+    rgb, disp, acc, _, _, = volume_render_radiance_field(
+        radiance_field,
+        z_vals,
+        rd,
+        subrng[1],
+        nerf_options.radiance_field_noise_std,
+        nerf_options.white_background,
+    )
+
+    imgs = (rgb, z_vals)
+
+    if validation:
+        imgs = tuple(img.reshape(*ray_directions.shape[:-1], -1) for img in imgs)
+
+    return imgs
+
+
 def run_one_iter_of_sdrf_nerflike(
     sdrf,
     ray_origins,
@@ -62,6 +155,8 @@ def run_one_iter_of_sdrf_nerflike(
             render_options.phi.lr_decay_factor
             ** (iteration / (render_options.phi.lr_decay * 1000))
         )
+        # sigma = sigma + sdrf.ddf(pt)
+        sigma = sigma
         volsdf_psi = lambda dist: jax.lax.cond(
             (dist <= 0.0)[0],
             dist,

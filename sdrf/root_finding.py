@@ -142,12 +142,18 @@ def sphere_trace_depth(sdf, ro, rd, iso, truncation):
         truncation,
     )
 
-    return jax.lax.custom_root(
+    def tangent_solve(g, y):
+        g_result = g(1.0)
+        # return y / g_result
+        return jnp.where(jnp.abs(g_result) < 1e-5, 1.0, y / g_result)
+
+    depth = jax.lax.custom_root(
         lambda depth: sdf(ro + depth * rd).sum() - iso,
         0.0,
         solver,
-        lambda g, y: y / g(1.0),
+        tangent_solve,
     )
+    return depth
 
 
 sphere_trace_depth_batched.defvjp(

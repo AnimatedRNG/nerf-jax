@@ -13,6 +13,7 @@ import haiku as hk
 from scipy.spatial import KDTree
 from jax.scipy.ndimage import map_coordinates
 
+from .models import PyTorchBiasInitializer, SineInitializer
 from util import get_fan
 
 
@@ -197,7 +198,32 @@ def variance_init(grid_min, grid_max, resolution, hidden_size, dtype=jnp.float32
 
     # the weight and bias matrix for the first layer of a NeRF
     w_matrix = w_init((dimension, hidden_size), dtype=dtype)
-    b_matrix = w_init((hidden_size,), dtype=dtype)
+    b_matrix = b_init((hidden_size,), dtype=dtype)
+
+    # the equivalent of running the first layer of the network
+    return ((ds.reshape(-1, dimension) @ w_matrix) + b_matrix).reshape(
+        ds.shape[:-1] + (hidden_size,)
+    )
+
+
+def siren_init(grid_min, grid_max, resolution, hidden_size, dtype=jnp.float32):
+    dimension = grid_min.shape[0]
+    ds = jnp.stack(
+        jnp.meshgrid(
+            *tuple(
+                jnp.linspace(grid_min[di], grid_max[di], resolution, dtype=dtype)
+                for di in range(dimension)
+            )
+        ),
+        axis=-1,
+    )
+
+    w_init = SineInitializer(True)
+    b_init = PyTorchBiasInitializer()
+
+    # the weight and bias matrix for the first layer of a NeRF
+    w_matrix = w_init((dimension, hidden_size), dtype=dtype)
+    b_matrix = b_init((hidden_size,), dtype=dtype)
 
     # the equivalent of running the first layer of the network
     return ((ds.reshape(-1, dimension) @ w_matrix) + b_matrix).reshape(
@@ -254,6 +280,37 @@ class ConstantInitializer(hk.initializers.Initializer):
         # shape is [dim_x, dim_y, ..., hidden_size]
         assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
         return jnp.ones(shape, dtype=dtype)
+
+
+class SHInitializer(hk.initializers.Initializer):
+    def __init__(self, grid_min, grid_max):
+        self.grid_min = grid_min
+        self.grid_max = grid_max
+
+    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
+        # shape is [dim_x, dim_y, ..., hidden_size]
+        assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
+        s = shape[-1]
+        assert s == 27
+        rows = jnp.concatenate(
+            [jnp.concatenate((jnp.ones(1), jnp.zeros(s // 3 - 1))) for _ in range(3)],
+            axis=0,
+        )
+        return jnp.broadcast_to(rows, shape)
+
+
+class SirenInitializer(hk.initializers.Initializer):
+    def __init__(self, grid_min, grid_max):
+        self.grid_min = grid_min
+        self.grid_max = grid_max
+
+    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
+        # shape is [dim_x, dim_y, ..., hidden_size]
+        assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
+        resolution, hidden_size = shape[0], shape[-1]
+        return siren_init(
+            self.grid_min, self.grid_max, resolution, hidden_size, dtype=dtype
+        )
 
 
 def downsample(base_mipmap, scale_factor) -> jnp.ndarray:

@@ -80,7 +80,7 @@ sdrf:
       initial_sigma: 1.0
       lr_decay: 3
       lr_decay_factor: 0.9
-    num_samples: 8
+    num_samples: 16
     truncation_distance: 0.5
     additive: True
     chunksize: 32768 # 4096

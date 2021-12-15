@@ -42,7 +42,7 @@ def y2_1(theta, phi):
         * jnp.sqrt(15.0 / jnp.pi)
         * jnp.sin(phi)
         * jnp.sin(theta)
-        * jnp.cos(phi)
+        * jnp.cos(theta)
     )
 
 
@@ -90,21 +90,16 @@ def real_valued_sh(
 
 
 def sample_real_sh(v, coeffs):
+    v_norm = jnp.linalg.norm(v)
+    v = jnp.where(v_norm < 1e-3, jnp.array([1.0, 0.0, 0.0]), v / v_norm)
     order = np.sqrt(coeffs.shape[-1]).astype(np.int32) - 1
     assert (order + 1) * (order + 1) == coeffs.shape[-1]
 
-    phi = jnp.arctan(
-        jnp.sqrt(jnp.square(v[..., 0:1]) + jnp.square(v[..., 1:2])) / v[..., 2:3]
-    )
-    at = jnp.arctan(v[..., 1:2] / v[..., 0:1])
-    theta = jnp.where(
-        v[..., 0:1] > 0.0,
-        at,
-        jnp.where(v[..., 0:1] < 0.0, at + jnp.pi, jnp.pi / 2),
-    )
+    theta = jnp.arccos(v[..., 2:3])
+    phi = jnp.arctan2(v[..., 1:2], v[..., 0:1])
 
-    orders = np.arange(int(jnp.square(order + 1)))
-    ls = np.sqrt(orders).astype(jnp.int32)
+    orders = np.arange(int(np.square(order + 1)))
+    ls = np.sqrt(orders).astype(np.int32)
     ms = ((orders - np.square(ls)) - ls).astype(np.int32)
     return coeffs.dot(real_valued_sh(ls, ms, theta, phi))
 

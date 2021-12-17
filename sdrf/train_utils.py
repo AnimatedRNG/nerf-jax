@@ -102,7 +102,7 @@ def run_one_iter_of_sdrf(
     z_vals = jax.lax.sort(z_vals, dimension=-1)
     z_vals = jax.lax.stop_gradient(z_vals)
     pts = ro[..., None, :] + rd[..., None, :] * z_vals[..., None]
-    mask = vmap(vmap(sdrf.geometry))(pts) < 1.0
+    # mask = vmap(vmap(sdrf.geometry))(pts) < 1.0
 
     # radiance model
     def model(pt, view):
@@ -122,11 +122,14 @@ def run_one_iter_of_sdrf(
         return jnp.concatenate((rgb, alpha), axis=-1)
 
     # get RGB and opacity samples over all the rays, mask out the outliers
-    radiance_field = vmap(
+    """radiance_field = vmap(
         lambda pts_ray, mask_ray, view: vmap(
             lambda pt, m: jnp.where(m, model(pt, view), jnp.zeros_like(model(pt, view)))
         )(pts_ray, mask_ray)
-    )(pts, mask, rd)
+    )(pts, mask, rd)"""
+    radiance_field = vmap(
+        lambda pts_ray, view: vmap(lambda pt: model(pt, view))(pts_ray)
+    )(pts, rd)
     rgb, disp, acc, _, _, = volume_render_radiance_field(
         radiance_field,
         z_vals,

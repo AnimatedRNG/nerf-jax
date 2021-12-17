@@ -95,7 +95,7 @@ def init_feature_grids(config, rng):
             feature_size=1,
             feature_initializer_fn=ConstantInitializer,
         )
-        radiance_grid = FeatureGrid(
+        """radiance_grid = FeatureGrid(
             64,
             lambda x, view: create_appearance_fn()(x, view),
             grid_min=jnp.array([-1.5, -1.5, -1.5]),
@@ -103,7 +103,7 @@ def init_feature_grids(config, rng):
             feature_size=16,
             feature_initializer_fn=RadianceInitializer,
             warp_field=warp_grid.sample,
-        )
+        )"""
         """radiance_grid = FeatureGrid(
             64,
             lambda x, view: siren_appearance_decoder(x, view),
@@ -112,14 +112,14 @@ def init_feature_grids(config, rng):
             feature_size=16,
             feature_initializer_fn=SirenInitializer,
         )"""
-        """radiance_grid = FeatureGrid(
+        radiance_grid = FeatureGrid(
             64,
             lambda x, view: sh_appearance_fn(x, view),
             grid_min=jnp.array([-1.5, -1.5, -1.5]),
             grid_max=jnp.array([1.5, 1.5, 1.5]),
             feature_size=27,
             feature_initializer_fn=SHInitializer,
-        )"""
+        )
         """radiance_grid = FeatureGrid(
             64,
             lambda x, view: create_appearance_fn()(x, view),

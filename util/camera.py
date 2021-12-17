@@ -46,14 +46,7 @@ class FirstPersonCamera(object):
 
     DEFAULT_MOUSE_SENSITIVITY = 0.4
 
-    DEFAULT_KEY_MAP = {
-        "forward": pyglet.window.key.W,
-        "backward": pyglet.window.key.S,
-        "left": pyglet.window.key.A,
-        "right": pyglet.window.key.D,
-        "up": pyglet.window.key.Z,
-        "down": pyglet.window.key.X,
-    }
+    DEFAULT_KEY_MAP = None
 
     class InputHandler(object):
         def __init__(self):
@@ -75,7 +68,7 @@ class FirstPersonCamera(object):
         self,
         window,
         position=(-1, 0, 0.8),
-        key_map=DEFAULT_KEY_MAP,
+        key_map=None,
         movement_speed=DEFAULT_MOVEMENT_SPEED,
         mouse_sensitivity=DEFAULT_MOUSE_SENSITIVITY,
         y_inv=True,
@@ -102,7 +95,16 @@ class FirstPersonCamera(object):
 
         window.push_handlers(self.__input_handler)
 
-        self.key_map = key_map
+        DEFAULT_KEY_MAP = {
+            "forward": pyglet.window.key.W,
+            "backward": pyglet.window.key.S,
+            "left": pyglet.window.key.A,
+            "right": pyglet.window.key.D,
+            "up": pyglet.window.key.Z,
+            "down": pyglet.window.key.X,
+        }
+
+        self.key_map = DEFAULT_KEY_MAP if key_map is None else key_map
         self.movement_speed = movement_speed
         self.mouse_sensitivity = mouse_sensitivity
 

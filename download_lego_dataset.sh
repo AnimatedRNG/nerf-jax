@@ -1,5 +1,5 @@
 #!/usr/bin/bash
 
-wget https://people.eecs.berkeley.edu/~bmild/nerf/nerf_example_data.zip
+wget http://cseweb.ucsd.edu/~viscomp/projects/LF/papers/ECCV20/nerf/nerf_example_data.zip
 unzip nerf_example_data.zip -d ./data
 rm nerf_example_data.zip

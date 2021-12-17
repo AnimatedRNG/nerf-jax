@@ -28,11 +28,16 @@ from sdrf import (
     SDRFParams,
     FeatureGrid,
     IGR,
+    Siren,
     DumbDecoder,
     ConstantInitializer,
+    ZeroInitializer,
     RadianceInitializer,
+    SHInitializer,
+    SirenInitializer,
     eikonal_loss,
     manifold_loss,
+    sample_real_sh,
     run_one_iter_of_sdrf_nerflike,
     run_one_iter_of_sdrf,
 )
@@ -53,12 +58,34 @@ def init_feature_grids(config, rng):
         create_appearance_fn = lambda: DumbDecoder(
             [16, 16, 3],
         )
+
+        def siren_appearance_decoder(x, view):
+            inp = jnp.concatenate((x, Siren(3, 16, 1, 16)(view)), axis=-1)
+            return Siren(x.shape[-1], 3, 2, 16)(inp)
+
+        def sh_appearance_fn(x, view):
+            return jnp.concatenate(
+                [
+                    sample_real_sh(view, c)[jnp.newaxis]
+                    for c in jnp.split(x, 3, axis=-1)
+                ],
+                axis=-1,
+            )
+
         sdf_grid = FeatureGrid(
             64,
             lambda x: create_geometry_fn()(x),
             grid_min=jnp.array([-1.5, -1.5, -1.5]),
             grid_max=jnp.array([1.5, 1.5, 1.5]),
             feature_size=1,
+        )
+        warp_grid = FeatureGrid(
+            64,
+            lambda x: 2.0 * jax.nn.sigmoid(x) - 1.0,
+            grid_min=jnp.array([0.0, 0.0, 0.0]),
+            grid_max=jnp.array([1.0, 1.0, 1.0]),
+            feature_size=1,
+            feature_initializer_fn=ZeroInitializer,
         )
         ddf_grid = FeatureGrid(
             64,
@@ -75,7 +102,32 @@ def init_feature_grids(config, rng):
             grid_max=jnp.array([1.5, 1.5, 1.5]),
             feature_size=16,
             feature_initializer_fn=RadianceInitializer,
+            warp_field=warp_grid.sample,
         )
+        """radiance_grid = FeatureGrid(
+            64,
+            lambda x, view: siren_appearance_decoder(x, view),
+            grid_min=jnp.array([-1.5, -1.5, -1.5]),
+            grid_max=jnp.array([1.5, 1.5, 1.5]),
+            feature_size=16,
+            feature_initializer_fn=SirenInitializer,
+        )"""
+        """radiance_grid = FeatureGrid(
+            64,
+            lambda x, view: sh_appearance_fn(x, view),
+            grid_min=jnp.array([-1.5, -1.5, -1.5]),
+            grid_max=jnp.array([1.5, 1.5, 1.5]),
+            feature_size=27,
+            feature_initializer_fn=SHInitializer,
+        )"""
+        """radiance_grid = FeatureGrid(
+            64,
+            lambda x, view: create_appearance_fn()(x, view),
+            grid_min=jnp.array([-1.5, -1.5, -1.5]),
+            grid_max=jnp.array([1.5, 1.5, 1.5]),
+            feature_size=16,
+            feature_initializer_fn=RadianceInitializer,
+        )"""
 
         def init(pt):
             return (
@@ -165,7 +217,7 @@ def train_nerf(config):
         maxval=images["train"].shape[0],
         dtype=jnp.uint32,
     )
-    print('focal length', intrinsics["test"].focal_length)
+    print("focal length", intrinsics["test"].focal_length)
 
     def loss_fn(f_rng, ps, i, image_id, use_root=False):
         H, W, focal = (
@@ -363,7 +415,7 @@ def train_nerf(config):
 
     for i in trange(0, config.experiment.train_iters, config.experiment.jit_loop):
         rng, subrng = jax.random.split(rng, 2)
-        use_root = i > 200
+        use_root = i > 400
         optimizer_state, losses = update_loop(subrng, optimizer_state, i, use_root)
         loss = losses.coarse_loss + losses.fine_loss + losses.root_loss
 
@@ -409,13 +461,13 @@ def train_nerf(config):
             validation_psnr_root = mse2psnr(float(img2mse(rgb_root, target_img)))
 
             ps = get_params(optimizer_state)
-            create_mrc(
+            """create_mrc(
                 str(logdir / "test.mrc"),
                 jax.vmap(lambda pt: sdrf.geometry(pt, ps.geometry)),
                 grid_min=jnp.array([-2.0, -2.0, -2.0]),
                 grid_max=jnp.array([2.0, 2.0, 2.0]),
                 resolution=256,
-            )
+            )"""
 
             # save model
             checkpoint_subdir = checkpoint_dir / str(i)

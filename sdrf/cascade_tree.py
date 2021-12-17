@@ -282,6 +282,17 @@ class ConstantInitializer(hk.initializers.Initializer):
         return jnp.ones(shape, dtype=dtype)
 
 
+class ZeroInitializer(hk.initializers.Initializer):
+    def __init__(self, grid_min, grid_max):
+        self.grid_min = grid_min
+        self.grid_max = grid_max
+
+    def __call__(self, shape: Sequence[int], dtype) -> jnp.ndarray:
+        # shape is [dim_x, dim_y, ..., hidden_size]
+        assert all(shape[i] == shape[0] for i in range(len(shape) - 1))
+        return jnp.zeros(shape, dtype=dtype)
+
+
 class SHInitializer(hk.initializers.Initializer):
     def __init__(self, grid_min, grid_max):
         self.grid_min = grid_min
@@ -360,6 +371,7 @@ class FeatureGrid(hk.Module):
         grid_max=jnp.array([1.0, 1.0]),
         feature_size=128,
         feature_initializer_fn=GeometricInitializer,
+        warp_field=None,
     ):
         super(FeatureGrid, self).__init__()
         self.dimensions = grid_min.shape[0]
@@ -374,6 +386,7 @@ class FeatureGrid(hk.Module):
         self.grid_min = grid_min
         self.grid_max = grid_max
         self.feature_size = feature_size
+        self.warp_field = warp_field
 
         self.base_features = hk.get_parameter(
             "w",
@@ -384,6 +397,9 @@ class FeatureGrid(hk.Module):
 
     def sample(self, pt: jnp.ndarray, decoder_args=[]):
         alpha = (pt - self.grid_min) / (self.grid_max - self.grid_min)
+
+        if self.warp_field is not None:
+            alpha = alpha + self.warp_field(alpha)
 
         # lattice point interpolation, not grid
         idx_f = alpha * (jnp.array(self.dims).astype(jnp.float32) - 1)

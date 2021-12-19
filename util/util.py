@@ -98,12 +98,11 @@ def get_ray_bundle(height, width, focal_length, tfrom_cam2world):
     ray_origins = jnp.broadcast_to(tfrom_cam2world[:3, -1], ray_directions.shape)
 
     uv = jnp.stack(
-        jnp.meshgrid(
+        [a.astype(jnp.int64) for a in jnp.meshgrid(
             jnp.arange(ray_origins.shape[0]),
             jnp.arange(ray_origins.shape[1]),
-            ordering="xy",
-            dtype=jnp.int64,
-        ),
+            indexing="xy",
+        )],
         axis=-1,
     )
     uv = jnp.concatenate((uv, jnp.zeros(uv.shape[:2] + (1,), dtype=jnp.int64)), axis=-1)

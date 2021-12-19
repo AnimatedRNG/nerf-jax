@@ -203,7 +203,7 @@ def train_nerf(config):
 
     # Logging
     logdir = Path("logs") / "lego" / datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
-    logdir.mkdir(exist_ok=True)
+    logdir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = logdir / "checkpoint"
     checkpoint_dir.mkdir(exist_ok=True)
     writer = SummaryWriter(logdir.absolute())
@@ -419,13 +419,6 @@ def train_nerf(config):
         optimizer_state, losses = update_loop(subrng, optimizer_state, i, use_root)
         loss = losses.coarse_loss + losses.fine_loss + losses.root_loss
 
-        """try:
-            ps = get_params(optimizer_state)
-            ps_np = tree_map(np.array, ps)
-            q.put_nowait((ps_np, i))
-        except queue.Full as _:
-            pass"""
-
         # Validation
         if (
             i % config.experiment.print_every == 0
@@ -470,9 +463,13 @@ def train_nerf(config):
             )"""
 
             # save model
-            checkpoint_subdir = checkpoint_dir / str(i)
-            checkpoint_subdir.mkdir(exist_ok=True)
-            save(checkpoint_subdir, ps)
+            if (
+                i % config.experiment.save_every == 0
+                or i == config.experiment.train_iters - 1
+            ):
+                checkpoint_subdir = checkpoint_dir / str(i)
+                checkpoint_subdir.mkdir(exist_ok=True)
+                save(checkpoint_subdir, ps)
 
             to_img = lambda x: np.array(
                 np.clip(jnp.transpose(x, axes=(2, 1, 0)), 0.0, 1.0) * 255

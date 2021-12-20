@@ -6,6 +6,7 @@ import yaml
 from pathlib import Path
 import math
 import time
+import io
 
 import numpy as np
 import argparse
@@ -20,10 +21,13 @@ import pyglet
 from pyglet.gl import *
 from pyglet.window import key
 
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
 from nerf import loader, sampler, Intrinsics
 from train_sdrf import init_feature_grids
 from sdrf import SDRF, SDRFGrid, SDRFParams, FeatureGrid, run_one_iter_of_sdrf
-from util import get_ray_bundle, FirstPersonCamera, restore
+from util import get_ray_bundle, FirstPersonCamera, restore, encode
 
 
 @functools.partial(jax.jit, static_argnums=(0, 1, 2, 3))
@@ -138,9 +142,110 @@ class Renderer(object):
         pyglet.app.run()
 
 
+def plot_to_img(fig):
+    fig.canvas.draw()
+
+    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+    return data
+
+
+def make_contour_plot(array_2d, mode="log", ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(2.75, 2.75), dpi=300)
+    else:
+        fig = plt.gcf()
+
+    if mode == "log":
+        num_levels = 6
+        levels_pos = np.logspace(-2, 0, num=num_levels)  # logspace
+        levels_neg = -1.0 * levels_pos[::-1]
+        levels = np.concatenate((levels_neg, np.zeros((0)), levels_pos), axis=0)
+        colors = plt.get_cmap("Spectral")(np.linspace(0.0, 1.0, num=num_levels * 2 + 1))
+    elif mode == "lin":
+        num_levels = 10
+        levels = np.linspace(-0.5, 0.5, num=num_levels)
+        colors = plt.get_cmap("Spectral")(np.linspace(0.0, 1.0, num=num_levels))
+
+    sample = np.flipud(array_2d)
+    CS = ax.contourf(sample, levels=levels, colors=colors)
+    fig.colorbar(CS, ax=ax)
+
+    ax.contour(sample, levels=levels, colors="k", linewidths=0.1)
+    ax.contour(sample, levels=[0], colors="k", linewidths=0.3)
+    ax.axis("off")
+    return fig
+
+
+def make_image_plot(array_2d):
+    sample = np.clip(array_2d, 0.0, 1.0)
+
+    return (sample * 255).astype(np.uint8)
+
+
+def generate_sdf_visualization(
+    config,
+    sdrf_grid,
+    ps,
+    grid_min=jnp.array([-1.5, -1.5, -1.5]),
+    grid_max=jnp.array([1.5, 1.5, 1.5]),
+    resolution=128,
+):
+    sdrf_f = SDRF(
+        geometry=lambda pt: sdrf_grid.geometry(pt, ps.geometry),
+        ddf=lambda pt: sdrf_grid.ddf(pt, ps.geometry),
+        appearance=lambda pt, view: sdrf_grid.appearance(pt, view, ps.appearance),
+    )
+    bufs = {"sdf": {}, "rgb": {}, "ddf": {}}
+
+    for k in tqdm(range(resolution)):
+        z_val = (k / resolution) * (grid_max[2] - grid_min[2]) + grid_min[2]
+        ds = jnp.stack(
+            jnp.meshgrid(
+                jnp.linspace(grid_min[0], grid_max[0], resolution),
+                jnp.linspace(grid_min[1], grid_max[1], resolution),
+            )
+            + [jnp.ones((resolution, resolution)) * z_val],
+            axis=-1,
+        )
+
+        sdf_slice = vmap(sdrf_f.geometry)(ds.reshape(-1, 3))
+        mask = jnp.abs(sdf_slice) < 1e-1
+        sdf_slice = sdf_slice.reshape(resolution, resolution, 1)
+        sdf_slice = jax.image.resize(
+            sdf_slice,
+            shape=(sdf_slice.shape[0] * 4, sdf_slice.shape[0] * 4, 1),
+            method=jax.image.ResizeMethod.NEAREST,
+        )
+
+        rgb_slice = vmap(sdrf_f.appearance)(
+            ds.reshape(-1, 3),
+            jnp.broadcast_to(jnp.array([0, 0, -1]), ds.shape).reshape(-1, 3),
+        )
+        rgb_slice = vmap(lambda rgb, m: rgb * m)(rgb_slice, mask)
+        rgb_slice = rgb_slice.reshape(resolution, resolution, 3)
+        rgb_slice = jax.image.resize(
+            rgb_slice,
+            shape=(rgb_slice.shape[0] * 4, rgb_slice.shape[0] * 4, 3),
+            method=jax.image.ResizeMethod.NEAREST,
+        )
+
+        fig_sdf = make_contour_plot(np.array(sdf_slice[..., 0]))
+        data_sdf = plot_to_img(fig_sdf)
+
+        data_rgb = make_image_plot(np.array(rgb_slice))
+
+        bufs["sdf"][k] = data_sdf
+        bufs["rgb"][k] = data_rgb
+
+    encode(bufs, "/tmp/", 10, None)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--logdir", type=str, required=True)
+    parser.add_argument("--gifs", default=False, action="store_true")
     args = parser.parse_args()
 
     logdir = Path(args.logdir)
@@ -168,7 +273,10 @@ def main():
     ps = tree_map(jnp.array, ps)
     sdrf_grid, _ = init_feature_grids(config, subrng[0])
 
-    renderer = Renderer(config, sdrf_grid, ps, 138.0, last_checkpoint, subrng[1])
+    if args.gifs:
+        generate_sdf_visualization(config, sdrf_grid, ps)
+    else:
+        renderer = Renderer(config, sdrf_grid, ps, 138.0, last_checkpoint, subrng[1])
 
 
 if __name__ == "__main__":

@@ -217,7 +217,6 @@ def train_nerf(config):
         maxval=images["train"].shape[0],
         dtype=jnp.uint32,
     )
-    print("focal length", intrinsics["test"].focal_length)
 
     def loss_fn(f_rng, ps, i, image_id, use_root=False):
         H, W, focal = (

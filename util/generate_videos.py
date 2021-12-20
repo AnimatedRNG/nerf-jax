@@ -32,13 +32,16 @@ def encode(imgs, output_folder, fps, upscale):
 
         steps = sorted(list(img_dict.keys()))
         for step in tqdm(steps):
-            img = cv2.resize(
-                img_dict[step],
-                None,
-                fx=upscale,
-                fy=upscale,
-                interpolation=cv2.INTER_NEAREST_EXACT,
-            )
+            if upscale != None:
+                img = cv2.resize(
+                    img_dict[step],
+                    None,
+                    fx=upscale,
+                    fy=upscale,
+                    interpolation=cv2.INTER_NEAREST_EXACT,
+                )
+            else:
+                img = img_dict[step]
             writer.append_data(img)
         writer.close()
 
